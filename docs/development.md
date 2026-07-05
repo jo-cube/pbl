@@ -14,6 +14,9 @@ internal/keyenc      physical Pebble key encoding and bounds
 internal/store       Pebble-backed collection operations
 tests/cli            functional use-case tests
 tests/perf           opt-in volume and benchmark checks
+scripts/install.sh   release asset installer
+.github/workflows    CI and release packaging
+Makefile             local build, test, run, install shortcuts
 ```
 
 `internal/keyenc` is the only package that should construct physical Pebble
@@ -32,14 +35,26 @@ keys.
 ## Normal Checks
 
 ```sh
-go test ./...
+make test
 ```
 
 Quick CLI checks:
 
 ```sh
-go run ./cmd/pbl --help
-go run ./cmd/pbl --version
+make run ARGS='--help'
+make run ARGS='--version'
+```
+
+Build into `./bin`:
+
+```sh
+make build
+```
+
+Install from source into `~/.local/bin`:
+
+```sh
+make install
 ```
 
 ## Functional Tests
@@ -73,6 +88,16 @@ go test ./tests/perf -run '^$' -bench . -benchtime=1x
 
 These checks are not a full performance harness. They exist to catch obvious
 streaming or batching regressions.
+
+## Release Packaging
+
+GitHub Actions follows the same release shape as `toolbox`:
+
+- CI runs `make test` and `make build` on pushes to `main` and pull requests.
+- CI cross-builds `pbl` for `linux/amd64`, `linux/arm64`, and `darwin/arm64`.
+- Pushing a `v*` tag publishes tarball release assets named
+  `pbl_<goos>_<goarch>.tar.gz`.
+- `scripts/install.sh` downloads those release assets from GitHub releases.
 
 ## Boundaries
 

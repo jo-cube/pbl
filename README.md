@@ -40,6 +40,46 @@ The first useful version supports:
 It is not trying to be SQL, a query language, a daemon, a remote database, a
 secondary-index system, or a RocksDB compatibility layer.
 
+## Install
+
+Install the latest release:
+
+```sh
+./scripts/install.sh
+```
+
+Install to a custom directory:
+
+```sh
+./scripts/install.sh "$HOME/bin"
+```
+
+Install a specific release version:
+
+```sh
+VERSION=v0.1.0 ./scripts/install.sh
+```
+
+Install without cloning the repository:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/jo-cube/pbl/main/scripts/install.sh | sh
+```
+
+Release binaries are published for:
+
+- `linux/amd64`
+- `linux/arm64`
+- `darwin/arm64`
+
+Release asset names follow this pattern:
+
+```text
+pbl_linux_amd64.tar.gz
+pbl_linux_arm64.tar.gz
+pbl_darwin_arm64.tar.gz
+```
+
 ## Documentation
 
 - [Usage guide](docs/usage.md): quickstart and common workflows.
@@ -55,14 +95,14 @@ secondary-index system, or a RocksDB compatibility layer.
 Normal check:
 
 ```sh
-go test ./...
+make test
 ```
 
 Quick CLI checks:
 
 ```sh
-go run ./cmd/pbl --help
-go run ./cmd/pbl --version
+make run ARGS='--help'
+make run ARGS='--version'
 ```
 
 The functional tests in [tests/cli](tests/cli) are written as executable
