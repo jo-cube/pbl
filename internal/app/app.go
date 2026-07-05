@@ -170,13 +170,18 @@ func (c *cli) putCommand() *cobra.Command {
 			return wantArgs(args, 3)
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			value := []byte(args[2])
+			if err := validateSync(sync); err != nil {
+				return err
+			}
+			var value []byte
 			if stdinValue {
 				b, err := io.ReadAll(c.stdin)
 				if err != nil {
 					return runtimeErr(err)
 				}
 				value = b
+			} else {
+				value = []byte(args[2])
 			}
 			s, err := c.open()
 			if err != nil {
@@ -199,7 +204,13 @@ func (c *cli) getCommand() *cobra.Command {
 		Short: "Read a value",
 		Args:  exactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			s, err := c.open()
+			if err := validateOneOf("format", format, "raw", "kv", "ndjson"); err != nil {
+				return err
+			}
+			if err := validateOneOf("missing", missing, "error", "skip", "null"); err != nil {
+				return err
+			}
+			s, err := c.openExisting()
 			if err != nil {
 				return err
 			}
@@ -230,7 +241,10 @@ func (c *cli) delCommand() *cobra.Command {
 		Short: "Delete a key",
 		Args:  exactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			s, err := c.open()
+			if err := validateSync(sync); err != nil {
+				return err
+			}
+			s, err := c.openExisting()
 			if err != nil {
 				return err
 			}
@@ -269,13 +283,10 @@ func (c *cli) scanCommand(mode string) *cobra.Command {
 		Short: scanShort(mode),
 		Args:  exactArgs(want),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if opts.keysOnly && opts.valuesOnly {
-				return usagef("--keys-only and --values-only cannot both be set")
+			if err := validateScanOptions(opts); err != nil {
+				return err
 			}
-			if opts.format == "raw" && !opts.valuesOnly {
-				return usagef("raw export requires --values-only")
-			}
-			s, err := c.open()
+			s, err := c.openExisting()
 			if err != nil {
 				return err
 			}
@@ -305,7 +316,10 @@ func (c *cli) collectionsCommand() *cobra.Command {
 		Short: "List collections",
 		Args:  exactArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			s, err := c.open()
+			if err := validateOneOf("format", format, "line", "ndjson"); err != nil {
+				return err
+			}
+			s, err := c.openExisting()
 			if err != nil {
 				return err
 			}
@@ -336,7 +350,10 @@ func (c *cli) infoCommand() *cobra.Command {
 		Short: "Show database information",
 		Args:  exactArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			s, err := c.open()
+			if err := validateOneOf("format", format, "text", "ndjson"); err != nil {
+				return err
+			}
+			s, err := c.openExisting()
 			if err != nil {
 				return err
 			}
@@ -367,7 +384,10 @@ func (c *cli) statsCommand() *cobra.Command {
 		Short: "Show storage metrics",
 		Args:  exactArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			s, err := c.open()
+			if err := validateOneOf("format", format, "text", "ndjson"); err != nil {
+				return err
+			}
+			s, err := c.openExisting()
 			if err != nil {
 				return err
 			}
@@ -396,7 +416,7 @@ func (c *cli) importCommand() *cobra.Command {
 	var fields []string
 	var batchSize int
 	var sync syncOptions
-	var ignoreDup, failDup bool
+	var replace, ignoreDup, failDup bool
 	cmd := &cobra.Command{
 		Use:   "import <collection>",
 		Short: "Import records from stdin",
@@ -404,6 +424,24 @@ func (c *cli) importCommand() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format == "" {
 				return usagef("usage: pbl import <collection> --format <format>")
+			}
+			if err := validateOneOf("format", format, "kv", "line", "ndjson", "raw"); err != nil {
+				return err
+			}
+			if err := validateOneOf("key-mode", keyMode, "value", "line-number"); err != nil {
+				return err
+			}
+			if err := validateSync(sync); err != nil {
+				return err
+			}
+			if err := validateBatchSize(batchSize); err != nil {
+				return err
+			}
+			if replace && (ignoreDup || failDup) {
+				return usagef("--replace cannot be combined with duplicate handling flags")
+			}
+			if ignoreDup && failDup {
+				return usagef("--ignore-duplicates and --fail-on-duplicate cannot both be set")
 			}
 			batchBytes, err := parseSize(batchBytesText)
 			if err != nil {
@@ -419,12 +457,40 @@ func (c *cli) importCommand() *cobra.Command {
 				return storageErr(err)
 			}
 			writeOpts := store.WriteOptions{Sync: writeSync(sync, false)}
-			add := func(rec codec.Record) error {
+			seen := map[string]struct{}{}
+			shouldAdd := func(rec codec.Record) (bool, error) {
 				if len(rec.Key) == 0 {
-					return badInputf("line %d: empty key", rec.Line)
+					return false, badInputf("line %d: empty key", rec.Line)
 				}
 				if ignoreDup || failDup {
+					k := string(rec.Key)
+					if _, ok := seen[k]; ok {
+						if ignoreDup {
+							return false, nil
+						}
+						return false, badInputf("line %d: duplicate key", rec.Line)
+					}
 					found, err := s.Has(collection, rec.Key)
+					if err != nil {
+						return false, storageErr(err)
+					}
+					if found && ignoreDup {
+						return false, nil
+					}
+					if found && failDup {
+						return false, badInputf("line %d: duplicate key", rec.Line)
+					}
+					seen[k] = struct{}{}
+				}
+				return true, nil
+			}
+			switch format {
+			case "raw":
+				if key == "" {
+					return usagef("raw import requires --key")
+				}
+				if ignoreDup || failDup {
+					found, err := s.Has(collection, []byte(key))
 					if err != nil {
 						return storageErr(err)
 					}
@@ -432,15 +498,8 @@ func (c *cli) importCommand() *cobra.Command {
 						return nil
 					}
 					if found && failDup {
-						return badInputf("line %d: duplicate key", rec.Line)
+						return badInputf("duplicate key")
 					}
-				}
-				return nil
-			}
-			switch format {
-			case "raw":
-				if key == "" {
-					return usagef("raw import requires --key")
 				}
 				value, err := io.ReadAll(c.stdin)
 				if err != nil {
@@ -448,7 +507,7 @@ func (c *cli) importCommand() *cobra.Command {
 				}
 				return storageWrap(s.Put(collection, []byte(key), value, writeOpts))
 			case "kv", "line", "ndjson":
-				return c.importRecords(s, collection, format, keyMode, fields, keySep, batchSize, batchBytes, writeOpts, add)
+				return c.importRecords(s, collection, format, keyMode, fields, keySep, batchSize, batchBytes, writeOpts, shouldAdd)
 			default:
 				return usagef("unknown format %q", format)
 			}
@@ -461,14 +520,14 @@ func (c *cli) importCommand() *cobra.Command {
 	cmd.Flags().StringArrayVar(&fields, "key-field", nil, "ndjson key field")
 	cmd.Flags().IntVar(&batchSize, "batch-size", 1000, "records per batch")
 	cmd.Flags().StringVar(&batchBytesText, "batch-bytes", "4MB", "bytes per batch")
+	cmd.Flags().BoolVar(&replace, "replace", false, "replace existing values")
 	cmd.Flags().BoolVar(&ignoreDup, "ignore-duplicates", false, "keep existing values")
 	cmd.Flags().BoolVar(&failDup, "fail-on-duplicate", false, "fail on duplicate")
-	cmd.Flags().Bool("replace", true, "replace existing values")
 	addSyncFlags(cmd, &sync)
 	return cmd
 }
 
-func (c *cli) importRecords(s *store.Store, collection, format, keyMode string, fields []string, keySep string, batchSize, batchBytes int, writeOpts store.WriteOptions, before func(codec.Record) error) error {
+func (c *cli) importRecords(s *store.Store, collection, format, keyMode string, fields []string, keySep string, batchSize, batchBytes int, writeOpts store.WriteOptions, before func(codec.Record) (bool, error)) error {
 	b := s.NewBatch()
 	defer func() { _ = b.Close() }()
 	flush := func() error {
@@ -483,8 +542,12 @@ func (c *cli) importRecords(s *store.Store, collection, format, keyMode string, 
 		return nil
 	}
 	add := func(rec codec.Record) error {
-		if err := before(rec); err != nil {
+		ok, err := before(rec)
+		if err != nil {
 			return err
+		}
+		if !ok {
+			return nil
 		}
 		if err := b.Put(collection, rec.Key, rec.Value); err != nil {
 			return storageErr(err)
@@ -517,7 +580,13 @@ func (c *cli) keysValuesCommand(mode string) *cobra.Command {
 		Short: keysValuesShort(mode),
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			s, err := c.open()
+			if err := validateLimit(limit); err != nil {
+				return err
+			}
+			if prefix != "" && (start != "" || end != "") {
+				return usagef("--prefix cannot be combined with range flags")
+			}
+			s, err := c.openExisting()
 			if err != nil {
 				return err
 			}
@@ -554,7 +623,16 @@ func (c *cli) getManyCommand() *cobra.Command {
 		Short: "Read keys from stdin and emit values",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			s, err := c.open()
+			if err := validateOneOf("input-format", inputFormat, "line", "ndjson"); err != nil {
+				return err
+			}
+			if err := validateOneOf("format", format, "raw", "kv", "ndjson"); err != nil {
+				return err
+			}
+			if err := validateOneOf("missing", missing, "skip", "null", "error"); err != nil {
+				return err
+			}
+			s, err := c.openExisting()
 			if err != nil {
 				return err
 			}
@@ -589,11 +667,20 @@ func (c *cli) delManyCommand() *cobra.Command {
 		Short: "Read keys from stdin and delete them",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := validateOneOf("input-format", inputFormat, "line", "ndjson"); err != nil {
+				return err
+			}
+			if err := validateSync(sync); err != nil {
+				return err
+			}
+			if err := validateBatchSize(batchSize); err != nil {
+				return err
+			}
 			batchBytes, err := parseSize(batchBytesText)
 			if err != nil {
 				return usageErr(err)
 			}
-			s, err := c.open()
+			s, err := c.openExisting()
 			if err != nil {
 				return err
 			}
@@ -643,7 +730,13 @@ func (c *cli) existsCommand() *cobra.Command {
 		Short: "Filter stdin by key existence",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			s, err := c.open()
+			if err := validateOneOf("input-format", inputFormat, "line", "ndjson"); err != nil {
+				return err
+			}
+			if err := validateOneOf("missing", missing, "skip", "error"); err != nil {
+				return err
+			}
+			s, err := c.openExisting()
 			if err != nil {
 				return err
 			}
@@ -693,10 +786,16 @@ func (c *cli) lookupCommand(join bool) *cobra.Command {
 				fields = append(fields, on)
 				inputFormat = "ndjson"
 			}
+			if err := validateOneOf("input-format", inputFormat, "line", "ndjson"); err != nil {
+				return err
+			}
+			if err := validateOneOf("missing", missing, "null", "skip", "error"); err != nil {
+				return err
+			}
 			if inputFormat == "ndjson" && asField == "" {
 				return usagef("ndjson lookup requires --as")
 			}
-			s, err := c.open()
+			s, err := c.openExisting()
 			if err != nil {
 				return err
 			}
@@ -739,6 +838,16 @@ func (c *cli) open() (*store.Store, error) {
 		return nil, storageErr(err)
 	}
 	return s, nil
+}
+
+func (c *cli) openExisting() (*store.Store, error) {
+	if _, err := os.Stat(c.dbPath); err != nil {
+		if os.IsNotExist(err) {
+			return nil, storageErr(fmt.Errorf("database does not exist: %s", c.dbPath))
+		}
+		return nil, storageErr(err)
+	}
+	return c.open()
 }
 
 func (c *cli) forInputKeys(inputFormat string, fields []string, sep string, fn func(codec.Record) error) error {
@@ -911,6 +1020,52 @@ func exactArgs(n int) cobra.PositionalArgs {
 func wantArgs(args []string, n int) error {
 	if len(args) != n {
 		return usagef("expected %d argument(s), got %d", n, len(args))
+	}
+	return nil
+}
+
+func validateOneOf(name, value string, allowed ...string) error {
+	for _, x := range allowed {
+		if value == x {
+			return nil
+		}
+	}
+	return usagef("unknown %s %q", name, value)
+}
+
+func validateSync(opts syncOptions) error {
+	if opts.sync && opts.noSync {
+		return usagef("--sync and --no-sync cannot both be set")
+	}
+	return nil
+}
+
+func validateBatchSize(n int) error {
+	if n <= 0 {
+		return usagef("--batch-size must be greater than 0")
+	}
+	return nil
+}
+
+func validateLimit(n int64) error {
+	if n < 0 {
+		return usagef("--limit must be greater than or equal to 0")
+	}
+	return nil
+}
+
+func validateScanOptions(opts scanOptions) error {
+	if err := validateOneOf("format", opts.format, "kv", "ndjson", "raw"); err != nil {
+		return err
+	}
+	if err := validateLimit(opts.limit); err != nil {
+		return err
+	}
+	if opts.keysOnly && opts.valuesOnly {
+		return usagef("--keys-only and --values-only cannot both be set")
+	}
+	if opts.format == "raw" && !opts.valuesOnly {
+		return usagef("raw export requires --values-only")
 	}
 	return nil
 }

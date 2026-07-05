@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -85,6 +86,16 @@ func TestCLIPutGetMissingAndScan(t *testing.T) {
 	}
 }
 
+func TestCLIPutStdinValue(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "db")
+	if out, err, code := run(t, db, "from stdin", "put", "users", "a", "--stdin"); out != "" || err != "" || code != 0 {
+		t.Fatalf("put --stdin out=%q err=%q code=%d", out, err, code)
+	}
+	if out, err, code := run(t, db, "", "get", "users", "a", "--no-newline"); out != "from stdin" || err != "" || code != 0 {
+		t.Fatalf("get stdin value out=%q err=%q code=%d", out, err, code)
+	}
+}
+
 func TestCLIRootHelpAndVersion(t *testing.T) {
 	var out, err bytes.Buffer
 	code := Main([]string{"--version"}, strings.NewReader(""), &out, &err)
@@ -96,6 +107,51 @@ func TestCLIRootHelpAndVersion(t *testing.T) {
 	code = Main([]string{"--help"}, strings.NewReader(""), &out, &err)
 	if code != 0 || strings.Count(out.String(), "Usage:") != 1 || err.String() != "" {
 		t.Fatalf("help out=%q err=%q code=%d", out.String(), err.String(), code)
+	}
+}
+
+func TestCLIImportDuplicatePoliciesSeeCurrentInput(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "db")
+	dups := kv(row("a", "A"), row("a", "B"))
+	if out, err, code := run(t, db, dups, "import", "users", "--format", "kv", "--fail-on-duplicate"); out != "" || !strings.Contains(err, "duplicate key") || code != 4 {
+		t.Fatalf("fail duplicate out=%q err=%q code=%d", out, err, code)
+	}
+
+	db = filepath.Join(t.TempDir(), "db")
+	if out, err, code := run(t, db, dups, "import", "users", "--format", "kv", "--ignore-duplicates"); out != "" || err != "" || code != 0 {
+		t.Fatalf("ignore duplicate out=%q err=%q code=%d", out, err, code)
+	}
+	if out, err, code := run(t, db, "", "scan", "users"); out != kv(row("a", "A")) || err != "" || code != 0 {
+		t.Fatalf("scan after ignore duplicate out=%q err=%q code=%d", out, err, code)
+	}
+}
+
+func TestCLIRejectsInvalidAndConflictingFlags(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "db")
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{"format", []string{"collections", "--format", "yaml"}},
+		{"sync", []string{"put", "users", "a", "A", "--sync", "--no-sync"}},
+		{"duplicates", []string{"import", "users", "--format", "kv", "--replace", "--ignore-duplicates"}},
+	}
+	for _, tc := range cases {
+		out, err, code := run(t, db, "", tc.args...)
+		if out != "" || err == "" || code != 3 {
+			t.Fatalf("%s out=%q err=%q code=%d", tc.name, out, err, code)
+		}
+	}
+}
+
+func TestCLIReadRequiresExistingDB(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "missing")
+	out, err, code := run(t, db, "", "get", "users", "a")
+	if out != "" || !strings.Contains(err, "database does not exist") || code != 5 {
+		t.Fatalf("get missing db out=%q err=%q code=%d", out, err, code)
+	}
+	if _, statErr := os.Stat(db); !os.IsNotExist(statErr) {
+		t.Fatalf("read created db: %v", statErr)
 	}
 }
 
