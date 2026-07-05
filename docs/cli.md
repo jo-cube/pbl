@@ -22,6 +22,10 @@ Database path resolution:
 2. `PBL_DB`
 3. `.pbl`
 
+Write commands that create records initialize the database if needed. Read,
+delete, metadata, and stream lookup commands require the database directory to
+exist.
+
 ## Exit Codes
 
 ```text
@@ -144,6 +148,10 @@ cat users.ndjson | pbl import users --format ndjson --key-field id
 ```
 
 `raw` import stores stdin under `--key`.
+Imports replace existing keys by default. `--replace` is accepted for explicit
+default behavior. `--ignore-duplicates` keeps the first value already present or
+seen in the current input stream. `--fail-on-duplicate` exits with bad input for
+either existing keys or duplicate keys in the same stream.
 
 ```text
 pbl export <collection>
@@ -195,7 +203,7 @@ pbl lookup <collection>
 ```
 
 Line mode emits stored values. NDJSON mode can attach the stored JSON value
-under `--as`.
+under `--as`. Stored values must be valid JSON when attached to NDJSON input.
 
 ```text
 pbl join <collection> --on <field> --as <field>

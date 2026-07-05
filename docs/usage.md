@@ -24,6 +24,9 @@ go run ./cmd/pbl --db ./local.pbl init
 PBL_DB=./local.pbl go run ./cmd/pbl collections
 ```
 
+Commands that write records create the database if needed. Read and lookup
+commands expect the database directory to already exist.
+
 ## Persistent Set
 
 Store one line per key:
@@ -59,7 +62,7 @@ cat events.ndjson | pbl join users --on user_id --as user
 ```
 
 Missing joins attach `null` by default. Use `--missing skip` for inner-join
-style behavior.
+style behavior. Stored values must be valid JSON for NDJSON joins.
 
 ## Ordered Index
 
