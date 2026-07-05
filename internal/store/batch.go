@@ -13,6 +13,9 @@ type Batch struct {
 }
 
 func (b *Batch) Put(collection string, key, value []byte) error {
+	if err := ValidateCollection(collection); err != nil {
+		return err
+	}
 	phys := keyenc.DataKey(collection, key)
 	if err := b.batch.Set(phys, value, nil); err != nil {
 		return err
@@ -23,6 +26,9 @@ func (b *Batch) Put(collection string, key, value []byte) error {
 }
 
 func (b *Batch) Delete(collection string, key []byte) error {
+	if err := ValidateCollection(collection); err != nil {
+		return err
+	}
 	phys := keyenc.DataKey(collection, key)
 	if err := b.batch.Delete(phys, nil); err != nil {
 		return err

@@ -3,6 +3,7 @@ package store
 import (
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -58,5 +59,22 @@ func TestCollectionsFromMetadata(t *testing.T) {
 	}
 	if want := []string{"a", "bb", "ccc"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("collections = %v, want %v", got, want)
+	}
+}
+
+func TestReadOperationsValidateCollection(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if _, err := s.Get("bad/name", []byte("k")); err == nil || !strings.Contains(err.Error(), "invalid collection") {
+		t.Fatalf("Get invalid collection err = %v", err)
+	}
+	if _, err := s.Has("bad/name", []byte("k")); err == nil || !strings.Contains(err.Error(), "invalid collection") {
+		t.Fatalf("Has invalid collection err = %v", err)
+	}
+	if err := s.Scan("bad/name", ScanOptions{}, func(Record) error { return nil }); err == nil || !strings.Contains(err.Error(), "invalid collection") {
+		t.Fatalf("Scan invalid collection err = %v", err)
 	}
 }

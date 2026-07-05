@@ -184,6 +184,9 @@ func (s *Store) Put(collection string, key, value []byte, opts WriteOptions) err
 }
 
 func (s *Store) Get(collection string, key []byte) ([]byte, error) {
+	if err := ValidateCollection(collection); err != nil {
+		return nil, err
+	}
 	value, closer, err := s.db.Get(keyenc.DataKey(collection, key))
 	if errors.Is(err, pebble.ErrNotFound) {
 		return nil, ErrNotFound
@@ -196,6 +199,9 @@ func (s *Store) Get(collection string, key []byte) ([]byte, error) {
 }
 
 func (s *Store) Has(collection string, key []byte) (bool, error) {
+	if err := ValidateCollection(collection); err != nil {
+		return false, err
+	}
 	_, closer, err := s.db.Get(keyenc.DataKey(collection, key))
 	if errors.Is(err, pebble.ErrNotFound) {
 		return false, nil
@@ -207,20 +213,32 @@ func (s *Store) Has(collection string, key []byte) (bool, error) {
 }
 
 func (s *Store) Delete(collection string, key []byte, opts WriteOptions) error {
+	if err := ValidateCollection(collection); err != nil {
+		return err
+	}
 	return s.db.Delete(keyenc.DataKey(collection, key), pebbleWriteOptions(opts))
 }
 
 func (s *Store) Scan(collection string, opts ScanOptions, fn func(Record) error) error {
+	if err := ValidateCollection(collection); err != nil {
+		return err
+	}
 	lower, upper := keyenc.CollectionBounds(collection)
 	return s.scan(lower, upper, opts, fn)
 }
 
 func (s *Store) Prefix(collection string, prefix []byte, opts ScanOptions, fn func(Record) error) error {
+	if err := ValidateCollection(collection); err != nil {
+		return err
+	}
 	lower, upper := keyenc.PrefixBounds(collection, prefix)
 	return s.scan(lower, upper, opts, fn)
 }
 
 func (s *Store) Range(collection string, start, end []byte, opts ScanOptions, fn func(Record) error) error {
+	if err := ValidateCollection(collection); err != nil {
+		return err
+	}
 	lower, upper := keyenc.RangeBounds(collection, start, end)
 	return s.scan(lower, upper, opts, fn)
 }
