@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jo-cube/pbl/internal/buildinfo"
 	"github.com/jo-cube/pbl/internal/codec"
@@ -122,6 +123,7 @@ func (c *cli) command() *cobra.Command {
 		c.infoCommand(),
 		c.statsCommand(),
 		c.importCommand(),
+		c.applyCommand(),
 		c.scanCommand("export"),
 		c.keysValuesCommand("keys"),
 		c.keysValuesCommand("values"),
@@ -570,6 +572,124 @@ func (c *cli) importRecords(s *store.Store, collection, format, keyMode string, 
 		return badInputErr(err)
 	}
 	return flush()
+}
+
+func (c *cli) applyCommand() *cobra.Command {
+	var format, batchBytesText string
+	var batchSize int
+	var sync syncOptions
+	var stats bool
+	cmd := &cobra.Command{
+		Use:   "apply <collection>",
+		Short: "Apply put/delete records from stdin",
+		Args:  exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if format == "" {
+				return usagef("usage: pbl apply <collection> --format <format>")
+			}
+			if err := validateOneOf("format", format, "kcat", "frame"); err != nil {
+				return err
+			}
+			if err := validateSync(sync); err != nil {
+				return err
+			}
+			if err := validateBatchSize(batchSize); err != nil {
+				return err
+			}
+			batchBytes, err := parseSize(batchBytesText)
+			if err != nil {
+				return usageErr(err)
+			}
+			s, err := c.open()
+			if err != nil {
+				return err
+			}
+			defer s.Close()
+			collection := args[0]
+			if err := s.EnsureCollection(collection); err != nil {
+				return storageErr(err)
+			}
+			result, err := c.applyRecords(s, collection, format, batchSize, batchBytes, store.WriteOptions{Sync: writeSync(sync, false)})
+			if err != nil {
+				return err
+			}
+			if stats && !c.quiet {
+				fmt.Fprintf(c.stderr, "pbl: applied records=%d puts=%d deletes=%d batches=%d bytes=%d duration=%s\n", result.records, result.puts, result.deletes, result.batches, result.bytes, result.elapsed.Round(time.Millisecond))
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&format, "format", "", "kcat|frame")
+	cmd.Flags().IntVar(&batchSize, "batch-size", 1000, "records per batch")
+	cmd.Flags().StringVar(&batchBytesText, "batch-bytes", "4MB", "bytes per batch")
+	cmd.Flags().BoolVar(&stats, "stats", false, "write ingest stats to stderr")
+	addSyncFlags(cmd, &sync)
+	return cmd
+}
+
+type applyStats struct {
+	records int64
+	puts    int64
+	deletes int64
+	batches int64
+	bytes   int64
+	elapsed time.Duration
+}
+
+func (c *cli) applyRecords(s *store.Store, collection, format string, batchSize, batchBytes int, writeOpts store.WriteOptions) (applyStats, error) {
+	start := time.Now()
+	var result applyStats
+	b := s.NewBatch()
+	defer func() { _ = b.Close() }()
+	flush := func() error {
+		if b.Count() == 0 {
+			return nil
+		}
+		if err := b.Commit(writeOpts); err != nil {
+			return storageErr(err)
+		}
+		result.batches++
+		_ = b.Close()
+		b = s.NewBatch()
+		return nil
+	}
+	add := func(rec codec.ApplyRecord) error {
+		if len(rec.Key) == 0 {
+			return badInputf("record %d: empty key", rec.Line)
+		}
+		var err error
+		if rec.Delete {
+			err = b.Delete(collection, rec.Key)
+			result.deletes++
+		} else {
+			err = b.Put(collection, rec.Key, rec.Value)
+			result.puts++
+		}
+		if err != nil {
+			return storageErr(err)
+		}
+		result.records++
+		result.bytes = rec.Bytes
+		if b.Count() >= batchSize || b.ApproxBytes() >= batchBytes {
+			return flush()
+		}
+		return nil
+	}
+	var err error
+	switch format {
+	case "kcat":
+		err = codec.ReadKcatApplyRecords(c.stdin, add)
+	case "frame":
+		err = codec.ReadFrameApplyRecords(c.stdin, add)
+	}
+	if err != nil {
+		return result, badInputErr(err)
+	}
+	if err := flush(); err != nil {
+		return result, err
+	}
+	result.elapsed = time.Since(start)
+	return result, nil
 }
 
 func (c *cli) keysValuesCommand(mode string) *cobra.Command {

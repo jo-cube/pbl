@@ -18,6 +18,14 @@ type Record struct {
 	JSON  map[string]any
 }
 
+type ApplyRecord struct {
+	Delete bool
+	Key    []byte
+	Value  []byte
+	Line   int64
+	Bytes  int64
+}
+
 type LineReader struct {
 	r    *bufio.Reader
 	line int64
@@ -139,6 +147,160 @@ func ReadNDJSONRecords(r io.Reader, fields []string, sep string, fn func(Record)
 		}); err != nil {
 			return err
 		}
+	}
+}
+
+func ReadKcatApplyRecords(r io.Reader, fn func(ApplyRecord) error) error {
+	br := bufio.NewReaderSize(r, 64*1024)
+	var line, total int64
+	for {
+		key, n, err := readUntil(br, '\t')
+		total += n
+		if err == io.EOF && len(key) == 0 {
+			return nil
+		}
+		line++
+		if err != nil {
+			return fmt.Errorf("record %d: missing key separator", line)
+		}
+		if len(key) == 0 {
+			return fmt.Errorf("record %d: empty key", line)
+		}
+		sizeText, n, err := readUntil(br, '\t')
+		total += n
+		if err != nil {
+			return fmt.Errorf("record %d: missing payload length separator", line)
+		}
+		size, err := strconv.ParseInt(string(sizeText), 10, 64)
+		if err != nil || size < -1 {
+			return fmt.Errorf("record %d: invalid payload length", line)
+		}
+		if size > int64(int(^uint(0)>>1)) {
+			return fmt.Errorf("record %d: invalid payload length", line)
+		}
+		rec := ApplyRecord{Delete: size == -1, Key: append([]byte(nil), key...), Line: line}
+		if size >= 0 {
+			rec.Value = make([]byte, size)
+			nn, err := io.ReadFull(br, rec.Value)
+			total += int64(nn)
+			if err != nil {
+				return fmt.Errorf("record %d: truncated payload", line)
+			}
+		}
+		trailer, err := br.ReadByte()
+		if err == nil {
+			total++
+			if trailer != '\n' {
+				return fmt.Errorf("record %d: missing record newline", line)
+			}
+		} else if err != io.EOF {
+			return err
+		}
+		rec.Bytes = total
+		if err := fn(rec); err != nil {
+			return err
+		}
+		if err == io.EOF {
+			return nil
+		}
+	}
+}
+
+func ReadFrameApplyRecords(r io.Reader, fn func(ApplyRecord) error) error {
+	br := bufio.NewReaderSize(r, 64*1024)
+	var line, total int64
+	for {
+		header, err := br.ReadString('\n')
+		if err == io.EOF && header == "" {
+			return nil
+		}
+		line++
+		total += int64(len(header))
+		if err != nil {
+			return fmt.Errorf("record %d: truncated header", line)
+		}
+		header = strings.TrimSuffix(header, "\n")
+		parts := strings.Split(header, " ")
+		rec, body, err := parseFrameHeader(parts, line)
+		if err != nil {
+			return err
+		}
+		n, err := io.ReadFull(br, body)
+		total += int64(n)
+		if err != nil {
+			return fmt.Errorf("record %d: truncated body", line)
+		}
+		rec.Bytes = total
+		if err := fn(rec); err != nil {
+			return err
+		}
+	}
+}
+
+func parseFrameHeader(parts []string, line int64) (ApplyRecord, []byte, error) {
+	if len(parts) == 0 {
+		return ApplyRecord{}, nil, fmt.Errorf("record %d: empty header", line)
+	}
+	switch parts[0] {
+	case "P":
+		if len(parts) != 3 {
+			return ApplyRecord{}, nil, fmt.Errorf("record %d: invalid put header", line)
+		}
+		keyLen, valueLen, err := parseFrameLengths(parts[1], parts[2])
+		if err != nil {
+			return ApplyRecord{}, nil, fmt.Errorf("record %d: %w", line, err)
+		}
+		if valueLen > int(^uint(0)>>1)-keyLen {
+			return ApplyRecord{}, nil, fmt.Errorf("record %d: invalid length", line)
+		}
+		body := make([]byte, keyLen+valueLen)
+		return ApplyRecord{Key: body[:keyLen], Value: body[keyLen:], Line: line}, body, nil
+	case "D":
+		if len(parts) != 2 {
+			return ApplyRecord{}, nil, fmt.Errorf("record %d: invalid delete header", line)
+		}
+		keyLen, err := parseFrameLength(parts[1])
+		if err != nil {
+			return ApplyRecord{}, nil, fmt.Errorf("record %d: %w", line, err)
+		}
+		key := make([]byte, keyLen)
+		return ApplyRecord{Delete: true, Key: key, Line: line}, key, nil
+	default:
+		return ApplyRecord{}, nil, fmt.Errorf("record %d: unknown operation", line)
+	}
+}
+
+func parseFrameLengths(keyText, valueText string) (int, int, error) {
+	keyLen, err := parseFrameLength(keyText)
+	if err != nil {
+		return 0, 0, err
+	}
+	valueLen, err := parseFrameLength(valueText)
+	return keyLen, valueLen, err
+}
+
+func parseFrameLength(s string) (int, error) {
+	n, err := strconv.Atoi(s)
+	if err != nil || n < 0 {
+		return 0, fmt.Errorf("invalid length")
+	}
+	return n, nil
+}
+
+func readUntil(r *bufio.Reader, delim byte) ([]byte, int64, error) {
+	var out []byte
+	var n int64
+	for {
+		part, err := r.ReadBytes(delim)
+		out = append(out, part...)
+		n += int64(len(part))
+		if err == nil {
+			return out[:len(out)-1], n, nil
+		}
+		if err == bufio.ErrBufferFull {
+			continue
+		}
+		return out, n, err
 	}
 }
 

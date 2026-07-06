@@ -34,6 +34,7 @@ The first useful version supports:
 - collection metadata, `info`, and `stats`;
 - `kv`, `line`, `raw`, and `ndjson` edge formats;
 - batched import/export;
+- ordered put/delete stream apply for compacted feeds;
 - streaming `get-many`, `del-many`, `exists`, `lookup`, and `join`;
 - storage format v1 over one Pebble database directory.
 

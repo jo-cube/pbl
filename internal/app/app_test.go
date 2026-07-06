@@ -171,6 +171,45 @@ func TestCLIImportExportAndStreams(t *testing.T) {
 	}
 }
 
+func TestCLIApplyKcatCompactedStream(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "db")
+	in := "a\t1\tA\nb\t1\tB\na\t1\tC\nb\t-1\t\nempty\t0\t\n"
+	if out, err, code := run(t, db, in, "apply", "users", "--format", "kcat"); out != "" || err != "" || code != 0 {
+		t.Fatalf("apply out=%q err=%q code=%d", out, err, code)
+	}
+	if out, err, code := run(t, db, "", "scan", "users"); out != kv(row("a", "C"), row("empty", "")) || err != "" || code != 0 {
+		t.Fatalf("scan out=%q err=%q code=%d", out, err, code)
+	}
+}
+
+func TestCLIApplyFrameAndStats(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "db")
+	in := "D 7\nmissingP 1 1\naAD 1\naP 1 0\nb"
+	out, errText, code := run(t, db, in, "apply", "users", "--format", "frame", "--stats")
+	if out != "" || code != 0 {
+		t.Fatalf("apply out=%q err=%q code=%d", out, errText, code)
+	}
+	for _, want := range []string{"records=4", "puts=2", "deletes=2", "batches=1"} {
+		if !strings.Contains(errText, want) {
+			t.Fatalf("stats missing %q: %q", want, errText)
+		}
+	}
+	if out, err, code := run(t, db, "", "scan", "users"); out != kv(row("b", "")) || err != "" || code != 0 {
+		t.Fatalf("scan out=%q err=%q code=%d", out, err, code)
+	}
+	out, errText, code = run(t, db, in, "--quiet", "apply", "users", "--format", "frame", "--stats")
+	if out != "" || errText != "" || code != 0 {
+		t.Fatalf("quiet stats out=%q err=%q code=%d", out, errText, code)
+	}
+}
+
+func TestCLIApplyBadInput(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "db")
+	if out, err, code := run(t, db, "a\t4\txy", "apply", "users", "--format", "kcat"); out != "" || !strings.Contains(err, "truncated payload") || code != 4 {
+		t.Fatalf("apply out=%q err=%q code=%d", out, err, code)
+	}
+}
+
 func TestCLIJoin(t *testing.T) {
 	db := filepath.Join(t.TempDir(), "db")
 	if out, err, code := run(t, db, userAdaNDJSON, "import", "users", "--format", "ndjson", "--key-field", "id"); out != "" || err != "" || code != 0 {

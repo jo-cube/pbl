@@ -159,6 +159,45 @@ pbl export <collection>
 
 Export uses the same scan flags.
 
+```text
+pbl apply <collection> --format kcat|frame
+```
+
+Applies an ordered stream of puts and deletes. Success writes no stdout.
+
+Useful flags:
+
+```text
+--batch-size <n>
+--batch-bytes <size>
+--stats
+--sync|--no-sync
+```
+
+`kcat` format is:
+
+```text
+key<TAB>payload-length<TAB>payload
+```
+
+`payload-length` greater than zero stores that many payload bytes. `0` stores an
+empty value. `-1` deletes the key. Each record ends with a newline after the
+payload.
+
+Example compacted topic import:
+
+```sh
+kcat -C -b "$BROKERS" -t "$TOPIC" -o beginning -e -f '%k\t%S\t%s\n' \
+  | pbl apply users --format kcat --batch-size 5000 --batch-bytes 32MB
+```
+
+`frame` format is binary-safe:
+
+```text
+P <key-bytes> <value-bytes>\n<key><value>
+D <key-bytes>\n<key>
+```
+
 ## Stream Commands
 
 ```text

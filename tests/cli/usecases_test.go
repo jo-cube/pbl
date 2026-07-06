@@ -105,6 +105,15 @@ const deleteManyInput = `u2
 u3
 `
 
+const compactedKcatStream = `u1	24	{"id":"u1","name":"Ada"}
+u2	26	{"id":"u2","name":"Grace"}
+u1	26	{"id":"u1","name":"Adele"}
+u2	-1	
+`
+
+const compactedScan = `u1	{"id":"u1","name":"Adele"}
+`
+
 func runStep(t *testing.T, db string, s step) string {
 	t.Helper()
 	var out, err bytes.Buffer
@@ -172,6 +181,16 @@ func TestUseCaseGetManyAndDelMany(t *testing.T) {
 		{name: "get many preserves input order", args: []string{"get-many", "users"}, stdin: getManyInput, wantOut: getManyOutput, code: 0},
 		{name: "delete many", args: []string{"del-many", "users"}, stdin: deleteManyInput, code: 0},
 		{name: "remaining record", args: []string{"scan", "users"}, wantOut: remainingUserKV, code: 0},
+	} {
+		runStep(t, db, s)
+	}
+}
+
+func TestUseCaseApplyCompactedStream(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "db")
+	for _, s := range []step{
+		{name: "apply compacted stream", args: []string{"apply", "users", "--format", "kcat"}, stdin: compactedKcatStream, code: 0},
+		{name: "final materialized state", args: []string{"scan", "users"}, wantOut: compactedScan, code: 0},
 	} {
 		runStep(t, db, s)
 	}
