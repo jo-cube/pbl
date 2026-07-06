@@ -6,22 +6,22 @@ command reference.
 ## Quickstart
 
 ```sh
-go run ./cmd/pbl init
+pbl init
 
-go run ./cmd/pbl put users u1 '{"id":"u1","name":"Ada"}'
-go run ./cmd/pbl get users u1
+pbl put users u1 '{"id":"u1","name":"Ada"}'
+pbl get users u1
 
 printf 'u2\tGrace\nu1\tAda\n' \
-  | go run ./cmd/pbl import names --format kv
+  | pbl import names --format kv
 
-go run ./cmd/pbl scan names
+pbl scan names
 ```
 
 Use a different database directory with `--db` or `PBL_DB`:
 
 ```sh
-go run ./cmd/pbl --db ./local.pbl init
-PBL_DB=./local.pbl go run ./cmd/pbl collections
+pbl --db ./local.pbl init
+PBL_DB=./local.pbl pbl collections
 ```
 
 Commands that write records create the database if needed. Read and lookup

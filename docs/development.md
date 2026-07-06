@@ -92,13 +92,13 @@ streaming or batching regressions.
 
 ## Release Packaging
 
-GitHub Actions follows the same release shape as `toolbox`:
+GitHub Actions builds and publishes release artifacts:
 
 - CI runs `make test` and `make build` on pushes to `main` and pull requests.
 - CI cross-builds `pbl` for `linux/amd64`, `linux/arm64`, and `darwin/arm64`.
 - Pushing a `v*` tag publishes tarball release assets named
   `pbl_<goos>_<goarch>.tar.gz`.
-- `scripts/install.sh` downloads those release assets from GitHub releases.
+- `scripts/install.sh` downloads release assets from GitHub releases.
 
 ## Boundaries
 
@@ -113,14 +113,3 @@ Do not add these without a concrete product decision:
 - Shell completion or progress UI.
 - Read-only Pebble open mode.
 - Complex Pebble tuning.
-
-## Source Plan
-
-The original design pack lives outside the repository at:
-
-```text
-/Users/josh/Downloads/pebble_cli_plan
-```
-
-Use it as background, not as a second source of truth. Repository docs and tests
-should describe the behavior that is actually implemented here.
