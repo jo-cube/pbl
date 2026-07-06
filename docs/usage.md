@@ -64,6 +64,25 @@ cat events.ndjson | pbl join users --on user_id --as user
 Missing joins attach `null` by default. Use `--missing skip` for inner-join
 style behavior. Stored values must be valid JSON for NDJSON joins.
 
+## Compacted Stream
+
+Apply a compacted Kafka topic through `kcat`:
+
+```sh
+kcat -C -b "$BROKERS" -t "$TOPIC" -o beginning -e -f '%k\t%S\t%s\n' \
+  | pbl apply users --format kcat --batch-size 5000 --batch-bytes 32MB
+```
+
+Records with payload length `-1` are applied as deletes. Empty payloads with
+length `0` are stored as empty values.
+
+For transformed or binary-safe streams, emit frame records instead:
+
+```text
+P <key-bytes> <value-bytes>\n<key><value>
+D <key-bytes>\n<key>
+```
+
 ## Ordered Index
 
 Use repeated `--key-field` flags to build compound keys:
@@ -124,6 +143,7 @@ Streams:
 
 ```text
 pbl import <collection> --format kv|line|ndjson|raw
+pbl apply <collection> --format kcat|frame
 pbl export <collection>
 pbl get-many <collection>
 pbl del-many <collection>

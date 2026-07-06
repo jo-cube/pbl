@@ -62,6 +62,7 @@ make install
 The tests in `tests/cli` double as executable examples. They cover:
 
 - KV import, scan, prefix, and range.
+- Compacted put/delete stream apply.
 - Persistent set membership with `exists`.
 - NDJSON import and `join`.
 - Compound key prefix scans.
