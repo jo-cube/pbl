@@ -14,7 +14,7 @@ Usage: $0 [pbl] [destination]
 Installs a prebuilt pbl release binary from ${REPO}.
 
 Arguments:
-  pbl          Optional binary name, accepted for toolbox-style usage
+  pbl          Optional binary name, accepted for compatibility
   destination Optional install directory (default: ${INSTALL_DIR})
 
 Environment:
