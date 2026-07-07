@@ -45,6 +45,20 @@ func TestNDJSONExtractKey(t *testing.T) {
 	}
 }
 
+func TestReadNDJSONRecordsPreservesLargeNumericKey(t *testing.T) {
+	in := `{"id":9007199254740993,"name":"Ada"}` + newline
+	var got Record
+	if err := ReadNDJSONRecords(strings.NewReader(in), []string{"id"}, ":", func(rec Record) error {
+		got = rec
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if string(got.Key) != "9007199254740993" {
+		t.Fatalf("key = %q", got.Key)
+	}
+}
+
 func TestWriteNDJSONValueIncludesKey(t *testing.T) {
 	var b bytes.Buffer
 	if err := WriteNDJSONValue(&b, []byte("u1"), []byte(`{"name":"Ada"}`), true); err != nil {

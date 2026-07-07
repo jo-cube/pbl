@@ -106,6 +106,7 @@ esac
 ASSET_NAME="${CLI_NAME}_${GOOS}_${GOARCH}.tar.gz"
 TMP_DIR="$(mktemp -d)"
 ARCHIVE_PATH="${TMP_DIR}/${ASSET_NAME}"
+CHECKSUM_PATH="${ARCHIVE_PATH}.sha256"
 
 cleanup() {
 	rm -rf "$TMP_DIR"
@@ -135,11 +136,28 @@ printf 'Downloading %s from %s\n' "$ASSET_NAME" "$DOWNLOAD_URL"
 case "$DOWNLOAD_TOOL" in
 	curl)
 		curl -fsSL "$DOWNLOAD_URL" -o "$ARCHIVE_PATH"
+		curl -fsSL "${DOWNLOAD_URL}.sha256" -o "$CHECKSUM_PATH"
 		;;
 	wget)
 		wget -qO "$ARCHIVE_PATH" "$DOWNLOAD_URL"
+		wget -qO "$CHECKSUM_PATH" "${DOWNLOAD_URL}.sha256"
 		;;
 esac
+
+if command -v sha256sum >/dev/null 2>&1; then
+	(cd "$TMP_DIR" && sha256sum -c "${ASSET_NAME}.sha256" >/dev/null)
+elif command -v shasum >/dev/null 2>&1; then
+	set -- $(cat "$CHECKSUM_PATH")
+	EXPECTED="$1"
+	ACTUAL="$(shasum -a 256 "$ARCHIVE_PATH" | awk '{print $1}')"
+	if [ "$ACTUAL" != "$EXPECTED" ]; then
+		printf 'error: checksum mismatch for %s\n' "$ASSET_NAME" >&2
+		exit 1
+	fi
+else
+	printf 'error: sha256sum or shasum is required to verify release assets\n' >&2
+	exit 1
+fi
 
 mkdir -p "$INSTALL_DIR"
 if [ "$(tar -tzf "$ARCHIVE_PATH")" != "$CLI_NAME" ]; then

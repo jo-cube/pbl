@@ -1,111 +1,164 @@
 # pbl
 
-`pbl` is a local, Pebble-backed key-value CLI for shell workflows.
+`pbl` is a local ordered key-value CLI backed by Pebble. It gives shell scripts a
+persistent lookup table, set, cache, or sorted index without running a server.
 
-It gives scripts a persistent ordered store without asking the user to run a
-server. Collections are logical keyspaces. Keys are ordered bytes. Values are
-opaque bytes. Text, KV, raw, and NDJSON support are import/export conventions at
-the edge.
+```sh
+pbl --db ./data.pbl import users --format kv < users.tsv
+pbl --db ./data.pbl get users u1
+cat ids.txt | pbl --db ./data.pbl get-many users
+```
 
-The project is small on purpose. It is meant to feel like a UNIX tool: stdout is
-data, stderr is diagnostics, stream commands preserve input order, and exit
-codes are stable enough for scripts.
+Values are stored as bytes. Formats such as `kv`, `line`, `raw`, and `ndjson`
+are only import/export conventions at the CLI edge.
 
-## Why It Exists
+## What It Is For
 
-Local data workflows often need a fast lookup table, a persistent set, a cache,
-or an ordered index between pipeline steps. `pbl` aims to cover that space with a
-single Go binary backed by Pebble.
+Use `pbl` when a shell workflow needs local state between steps:
 
-It is useful for tasks like:
+- load IDs once, then filter future streams by membership;
+- keep a small lookup table for enrichment;
+- materialize a compacted stream into the latest value for each key;
+- scan compound keys in byte order by prefix or half-open range;
+- keep a local cache or artifact map by key.
 
-- importing IDs or objects once and looking them up many times;
-- filtering streams by persistent set membership;
-- enriching NDJSON events from a stored collection;
-- scanning compound keys by prefix or half-open range;
-- keeping small local cache/artifact stores by key.
-
-## Current Shape
-
-The first useful version supports:
-
-- ordered key/value storage in named collections;
-- `put`, `get`, `del`, `scan`, `prefix`, and `range`;
-- collection metadata, `info`, and `stats`;
-- `kv`, `line`, `raw`, and `ndjson` edge formats;
-- batched import/export;
-- ordered put/delete stream apply for compacted feeds;
-- streaming `get-many`, `del-many`, `exists`, `lookup`, and `join`;
-- storage format v1 over one Pebble database directory.
-
-It is not trying to be SQL, a query language, a daemon, a remote database, a
-secondary-index system, or a RocksDB compatibility layer.
+It is deliberately not a database shell. There is no SQL, daemon, network
+service, secondary index system, or query planner. The shape is closer to
+`sort`, `join`, `grep`, and `sqlite` habits: plain commands, stable exit codes,
+and stdout that can be piped to the next tool.
 
 ## Install
 
-Install the latest release:
-
-```sh
-./scripts/install.sh
-```
-
-Install to a custom directory:
-
-```sh
-./scripts/install.sh "$HOME/bin"
-```
-
-Install a specific release version:
-
-```sh
-VERSION=v0.1.0 ./scripts/install.sh
-```
-
-Install without cloning the repository:
+Install the latest release to `~/.local/bin`:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/jo-cube/pbl/main/scripts/install.sh | sh
 ```
 
-Release binaries are published for:
+Install to a custom directory:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/jo-cube/pbl/main/scripts/install.sh | sh -s -- "$HOME/bin"
+```
+
+Install a specific version:
+
+```sh
+VERSION=v0.1.0 ./scripts/install.sh
+```
+
+Release archives are verified with SHA-256 checksums. Published platforms:
 
 - `linux/amd64`
 - `linux/arm64`
 - `darwin/arm64`
 
-Release asset names follow this pattern:
+## Quick Use
 
-```text
-pbl_linux_amd64.tar.gz
-pbl_linux_arm64.tar.gz
-pbl_darwin_arm64.tar.gz
+Pick a database directory with `--db` or `PBL_DB`. If neither is set, `pbl` uses
+`.pbl` in the current directory.
+
+```sh
+pbl --db ./local.pbl init
+PBL_DB=./local.pbl pbl collections
 ```
 
-## Documentation
+Common jobs:
 
-- [Usage guide](docs/usage.md): quickstart and common workflows.
+```sh
+# Import tab-separated key/value rows.
+printf 'u2\tGrace\nu1\tAda\n' | pbl import names --format kv
+
+# Read one value.
+pbl get names u1
+
+# Read many keys in input order.
+printf 'u2\nmissing\nu1\n' | pbl get-many names
+
+# Use a stored collection as a persistent set.
+cat blocked_ids.txt | pbl import blocked --format line --key-mode value
+cat incoming_ids.txt | pbl exists blocked
+
+# Join NDJSON events with stored JSON objects.
+cat users.ndjson | pbl import users --format ndjson --key-field id
+cat events.ndjson | pbl join users --on user_id --as user
+```
+
+## Data Model
+
+One Pebble directory stores all collections. A collection is a named logical
+keyspace. Keys are ordered bytes; values are opaque bytes.
+
+The CLI formats are edge formats:
+
+- `kv`: one `key<TAB>value` record per line.
+- `line`: one line per record, often useful for persistent sets.
+- `raw`: one stdin payload stored under `--key`.
+- `ndjson`: one JSON object per line, keyed by one or more fields.
+
+Scans are ordered by raw key bytes. `range` is half-open:
+
+```text
+start <= key < end
+```
+
+Stream commands preserve input order. Diagnostics go to stderr; stdout is data.
+
+## Command Map
+
+Core operations:
+
+```text
+pbl init
+pbl put <collection> <key> <value>
+pbl get <collection> <key>
+pbl del <collection> <key>
+```
+
+Ordered reads:
+
+```text
+pbl scan <collection>
+pbl prefix <collection> <prefix>
+pbl range <collection> <start> <end>
+pbl keys <collection>
+pbl values <collection>
+```
+
+Streaming workflows:
+
+```text
+pbl import <collection> --format kv|line|ndjson|raw
+pbl export <collection>
+pbl get-many <collection>
+pbl del-many <collection>
+pbl exists <collection>
+pbl lookup <collection>
+pbl join <collection>
+pbl apply <collection> --format kcat|frame
+```
+
+Metadata:
+
+```text
+pbl collections
+pbl info
+pbl stats
+```
+
+## Docs
+
+- [Usage guide](docs/usage.md): practical workflows with examples.
 - [CLI reference](docs/cli.md): commands, flags, formats, and exit codes.
-- [Storage format](docs/storage-format.md): physical key layout and
-  compatibility rules.
-- [Development notes](docs/development.md): package shape, checks, tests, and
+- [Storage format](docs/storage-format.md): compatibility-sensitive physical key
+  layout.
+- [Development notes](docs/development.md): package shape, checks, and project
   boundaries.
-- [Agent notes](AGENTS.md): repository-specific instructions for coding agents.
 
 ## Development
 
-Normal check:
-
 ```sh
 make test
+go vet ./...
+go mod tidy -diff
 ```
-
-Quick CLI checks:
-
-```sh
-make run ARGS='--help'
-make run ARGS='--version'
-```
-
-The functional tests in [tests/cli](tests/cli) are written as executable
-examples. The opt-in volume checks in [tests/perf](tests/perf) exist to catch
-obvious streaming and batching regressions.

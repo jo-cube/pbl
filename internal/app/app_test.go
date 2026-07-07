@@ -96,6 +96,36 @@ func TestCLIPutStdinValue(t *testing.T) {
 	}
 }
 
+func TestCLIMissingNullMatchesFormat(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "db")
+	if out, err, code := run(t, db, "", "init"); out != "" || err != "" || code != 0 {
+		t.Fatalf("init out=%q err=%q code=%d", out, err, code)
+	}
+	if out, err, code := run(t, db, "", "get", "users", "missing", "--missing", "null"); out != "null\n" || err != "" || code != 0 {
+		t.Fatalf("raw missing out=%q err=%q code=%d", out, err, code)
+	}
+	if out, err, code := run(t, db, "", "get", "users", "missing", "--format", "kv", "--missing", "null"); out != "missing\tnull\n" || err != "" || code != 0 {
+		t.Fatalf("kv missing out=%q err=%q code=%d", out, err, code)
+	}
+	if out, err, code := run(t, db, "", "get", "users", "missing", "--format", "ndjson", "--missing", "null"); out != "null\n" || err != "" || code != 0 {
+		t.Fatalf("ndjson missing out=%q err=%q code=%d", out, err, code)
+	}
+	if out, err, code := run(t, db, "", "get", "users", "missing", "--format", "ndjson", "--with-key", "--missing", "null"); out != "{\"_key\":\"missing\",\"_value\":null}\n" || err != "" || code != 0 {
+		t.Fatalf("ndjson missing with key out=%q err=%q code=%d", out, err, code)
+	}
+}
+
+func TestCLIStreamFailureAfterOutputIsPartial(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "db")
+	if out, err, code := run(t, db, "u1\tAda\n", "import", "users", "--format", "kv"); out != "" || err != "" || code != 0 {
+		t.Fatalf("import out=%q err=%q code=%d", out, err, code)
+	}
+	out, errText, code := run(t, db, "u1\nmissing\n", "get-many", "users", "--missing", "error")
+	if out != "Ada\n" || !strings.Contains(errText, "not found") || code != 6 {
+		t.Fatalf("get-many partial out=%q err=%q code=%d", out, errText, code)
+	}
+}
+
 func TestCLIRootHelpAndVersion(t *testing.T) {
 	var out, err bytes.Buffer
 	code := Main([]string{"--version"}, strings.NewReader(""), &out, &err)
@@ -135,12 +165,23 @@ func TestCLIRejectsInvalidAndConflictingFlags(t *testing.T) {
 		{"format", []string{"collections", "--format", "yaml"}},
 		{"sync", []string{"put", "users", "a", "A", "--sync", "--no-sync"}},
 		{"duplicates", []string{"import", "users", "--format", "kv", "--replace", "--ignore-duplicates"}},
+		{"range", []string{"keys", "users", "--range-start", "a"}},
 	}
 	for _, tc := range cases {
 		out, err, code := run(t, db, "", tc.args...)
 		if out != "" || err == "" || code != 3 {
 			t.Fatalf("%s out=%q err=%q code=%d", tc.name, out, err, code)
 		}
+	}
+}
+
+func TestCLIRejectsEmptyStreamKey(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "db")
+	if out, err, code := run(t, db, "", "init"); out != "" || err != "" || code != 0 {
+		t.Fatalf("init out=%q err=%q code=%d", out, err, code)
+	}
+	if out, err, code := run(t, db, "\n", "get-many", "users"); out != "" || !strings.Contains(err, "empty key") || code != 4 {
+		t.Fatalf("empty stream key out=%q err=%q code=%d", out, err, code)
 	}
 }
 
@@ -152,6 +193,34 @@ func TestCLIReadRequiresExistingDB(t *testing.T) {
 	}
 	if _, statErr := os.Stat(db); !os.IsNotExist(statErr) {
 		t.Fatalf("read created db: %v", statErr)
+	}
+}
+
+func TestCLIMetadataRawKeysAndValues(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "db")
+	if out, err, code := run(t, db, "blob-value", "import", "blob", "--format", "raw", "--key", "one"); out != "" || err != "" || code != 0 {
+		t.Fatalf("raw import out=%q err=%q code=%d", out, err, code)
+	}
+	if out, err, code := run(t, db, usersImport, "import", "users", "--format", "kv"); out != "" || err != "" || code != 0 {
+		t.Fatalf("kv import out=%q err=%q code=%d", out, err, code)
+	}
+	if out, err, code := run(t, db, "", "get", "blob", "one", "--no-newline"); out != "blob-value" || err != "" || code != 0 {
+		t.Fatalf("raw get out=%q err=%q code=%d", out, err, code)
+	}
+	if out, err, code := run(t, db, "", "collections"); out != "blob\nusers\n" || err != "" || code != 0 {
+		t.Fatalf("collections out=%q err=%q code=%d", out, err, code)
+	}
+	if out, err, code := run(t, db, "", "keys", "users", "--range-start", "u1", "--range-end", "u3"); out != "u1\nu2\n" || err != "" || code != 0 {
+		t.Fatalf("keys out=%q err=%q code=%d", out, err, code)
+	}
+	if out, err, code := run(t, db, "", "values", "users", "--prefix", "u1"); out != "Ada\n" || err != "" || code != 0 {
+		t.Fatalf("values out=%q err=%q code=%d", out, err, code)
+	}
+	if out, err, code := run(t, db, "", "info"); !strings.Contains(out, "storage_format_version: 1\n") || !strings.Contains(out, "collections: 2\n") || err != "" || code != 0 {
+		t.Fatalf("info out=%q err=%q code=%d", out, err, code)
+	}
+	if out, err, code := run(t, db, "", "stats"); !strings.Contains(out, "disk_used:") || err != "" || code != 0 {
+		t.Fatalf("stats out=%q err=%q code=%d", out, err, code)
 	}
 }
 

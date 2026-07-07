@@ -1,0 +1,154 @@
+package app
+
+import (
+	"encoding/json"
+	"fmt"
+
+	"github.com/jo-cube/pbl/internal/store"
+	"github.com/spf13/cobra"
+)
+
+func (c *cli) scanCommand(mode string) *cobra.Command {
+	opts := scanOptions{format: "kv"}
+	use := mode + " <collection>"
+	want := 1
+	if mode == "prefix" {
+		use = "prefix <collection> <prefix>"
+		want = 2
+	}
+	if mode == "range" {
+		use = "range <collection> <start> <end>"
+		want = 3
+	}
+	cmd := &cobra.Command{
+		Use:   use,
+		Short: scanShort(mode),
+		Args:  exactArgs(want),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := validateScanOptions(opts); err != nil {
+				return err
+			}
+			s, err := c.openExisting()
+			if err != nil {
+				return err
+			}
+			defer s.Close()
+			fn := func(r store.Record) error {
+				return c.writeScanRecord(r.Key, r.Value, opts.format, opts.keysOnly, opts.valuesOnly, opts.includeKey)
+			}
+			scanOpts := store.ScanOptions{Limit: opts.limit}
+			switch mode {
+			case "scan", "export":
+				return storageWrap(s.Scan(args[0], scanOpts, fn))
+			case "prefix":
+				return storageWrap(s.Prefix(args[0], []byte(args[1]), scanOpts, fn))
+			default:
+				return storageWrap(s.Range(args[0], []byte(args[1]), []byte(args[2]), scanOpts, fn))
+			}
+		},
+	}
+	addScanFlags(cmd, &opts)
+	return cmd
+}
+
+func (c *cli) collectionsCommand() *cobra.Command {
+	var format string
+	cmd := &cobra.Command{
+		Use:   "collections",
+		Short: "List collections",
+		Args:  exactArgs(0),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := validateOneOf("format", format, "line", "ndjson"); err != nil {
+				return err
+			}
+			s, err := c.openExisting()
+			if err != nil {
+				return err
+			}
+			defer s.Close()
+			names, err := s.ListCollections()
+			if err != nil {
+				return storageErr(err)
+			}
+			for _, name := range names {
+				if format == "ndjson" {
+					b, _ := json.Marshal(map[string]string{"name": name})
+					fmt.Fprintln(c.stdout, string(b))
+				} else {
+					fmt.Fprintln(c.stdout, name)
+				}
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&format, "format", "line", "line|ndjson")
+	return cmd
+}
+
+func (c *cli) infoCommand() *cobra.Command {
+	var format string
+	cmd := &cobra.Command{
+		Use:   "info",
+		Short: "Show database information",
+		Args:  exactArgs(0),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := validateOneOf("format", format, "text", "ndjson"); err != nil {
+				return err
+			}
+			s, err := c.openExisting()
+			if err != nil {
+				return err
+			}
+			defer s.Close()
+			info, err := s.Info()
+			if err != nil {
+				return storageErr(err)
+			}
+			if format == "ndjson" {
+				return json.NewEncoder(c.stdout).Encode(info)
+			}
+			fmt.Fprintf(c.stdout, "path: %s\nstorage_format_version: %d\ncollections: %d\n", info.Path, info.StorageFormatVersion, info.CollectionCount)
+			if info.CreatedAt != "" {
+				fmt.Fprintf(c.stdout, "created_at: %s\n", info.CreatedAt)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&format, "format", "text", "text|ndjson")
+	return cmd
+}
+
+func (c *cli) statsCommand() *cobra.Command {
+	var format string
+	var raw bool
+	cmd := &cobra.Command{
+		Use:   "stats",
+		Short: "Show storage metrics",
+		Args:  exactArgs(0),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := validateOneOf("format", format, "text", "ndjson"); err != nil {
+				return err
+			}
+			s, err := c.openExisting()
+			if err != nil {
+				return err
+			}
+			defer s.Close()
+			stats, err := s.Stats()
+			if err != nil {
+				return storageErr(err)
+			}
+			if format == "ndjson" {
+				return json.NewEncoder(c.stdout).Encode(stats)
+			}
+			fmt.Fprintf(c.stdout, "path: %s\ndisk_used: %d\n", stats.Path, stats.DiskUsed)
+			if raw {
+				fmt.Fprint(c.stdout, stats.Raw)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&format, "format", "text", "text|ndjson")
+	cmd.Flags().BoolVar(&raw, "raw", false, "print raw Pebble metrics")
+	return cmd
+}

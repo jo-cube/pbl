@@ -90,5 +90,8 @@ Open behavior:
 Collection names must be non-empty and must use the current valid character
 set enforced by the store layer.
 
+CLI import and stream lookup paths reject empty user keys. The physical encoding
+can represent them, but they are not accepted user-facing input in v1.
+
 Collection deletion is not implemented in v0.1. When it exists, it should delete
 the collection key range and its metadata together.
