@@ -134,8 +134,14 @@ func ReadNDJSONRecords(r io.Reader, fields []string, sep string, fn func(Record)
 			return err
 		}
 		var obj map[string]any
-		if err := json.Unmarshal(line, &obj); err != nil {
+		dec := json.NewDecoder(bytes.NewReader(line))
+		dec.UseNumber()
+		if err := dec.Decode(&obj); err != nil {
 			return fmt.Errorf("line %d: invalid json: %w", n, err)
+		}
+		var extra any
+		if err := dec.Decode(&extra); err != io.EOF {
+			return fmt.Errorf("line %d: invalid json: multiple values", n)
 		}
 		key, err := ExtractKey(obj, fields, sep)
 		if err != nil {
@@ -344,6 +350,8 @@ func CanonicalKey(v any) (string, error) {
 		return x, nil
 	case float64:
 		return strconv.FormatFloat(x, 'f', -1, 64), nil
+	case json.Number:
+		return x.String(), nil
 	case bool:
 		return strconv.FormatBool(x), nil
 	case nil:
