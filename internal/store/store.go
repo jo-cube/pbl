@@ -78,10 +78,15 @@ func (s *Store) Init() error {
 	version, closer, err := s.db.Get(keyenc.MetadataKey("format-version"))
 	if errors.Is(err, pebble.ErrNotFound) {
 		now := time.Now().UTC().Format(time.RFC3339Nano)
-		if err := s.db.Set(keyenc.MetadataKey("format-version"), []byte("1"), pebble.Sync); err != nil {
+		b := s.db.NewBatch()
+		defer b.Close()
+		if err := b.Set(keyenc.MetadataKey("format-version"), []byte("1"), nil); err != nil {
 			return err
 		}
-		return s.db.Set(keyenc.MetadataKey("created-at"), []byte(now), pebble.Sync)
+		if err := b.Set(keyenc.MetadataKey("created-at"), []byte(now), nil); err != nil {
+			return err
+		}
+		return b.Commit(pebble.Sync)
 	}
 	if err != nil {
 		return err
