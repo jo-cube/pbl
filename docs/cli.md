@@ -35,7 +35,7 @@ exist.
 3 bad usage
 4 bad input data
 5 storage/open/lock error
-6 partial streaming failure
+6 partial failure after stdout output began
 ```
 
 ## Formats
@@ -50,8 +50,9 @@ exist.
 key<TAB>value
 ```
 
-`ndjson` is one JSON value per line. Repeated `--key-field` flags build a
-compound key joined with `--key-sep`, which defaults to `:`.
+`ndjson` input is one JSON object per line. Repeated `--key-field` flags build a
+compound key joined with `--key-sep`, which defaults to `:`. String, number,
+boolean, and null key fields are accepted; object and array key fields are not.
 
 ## Core Commands
 
@@ -76,7 +77,9 @@ pbl get <collection> <key>
 ```
 
 Default output is the raw value followed by a newline. A missing key exits `2`
-unless `--missing skip` or `--missing null` is selected.
+unless `--missing skip` or `--missing null` is selected. Missing null output
+matches the selected format: `null`, `key<TAB>null`, or NDJSON `null`. With
+`--format ndjson --with-key`, it emits `{"_key": "...", "_value": null}`.
 
 ```text
 pbl del <collection> <key> [--fail-missing] [--sync|--no-sync]
@@ -117,6 +120,8 @@ Convenience aliases:
 pbl keys <collection> [--prefix <p>] [--range-start <s>] [--range-end <e>] [--limit <n>]
 pbl values <collection> [--prefix <p>] [--range-start <s>] [--range-end <e>] [--limit <n>]
 ```
+
+`--range-start` and `--range-end` must be used together.
 
 ## Import And Export
 
@@ -209,7 +214,8 @@ pbl get-many <collection>
   [--missing skip|null|error]
 ```
 
-Reads lookup keys from stdin and emits results in input order.
+Reads lookup keys from stdin and emits results in input order. Empty input keys
+are bad input.
 
 ```text
 pbl del-many <collection>

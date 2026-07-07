@@ -1,70 +1,141 @@
 # Usage Guide
 
-This guide shows the common `pbl` workflows. See [cli.md](cli.md) for the full
-command reference.
+This guide shows the workflows `pbl` is meant to make easy: local lookups,
+persistent sets, NDJSON joins, ordered scans, and compacted stream materializing.
+See [cli.md](cli.md) for every flag.
 
-## Quickstart
+## Database Path
+
+Use `--db` for one command or `PBL_DB` for a shell session:
 
 ```sh
-pbl init
+pbl --db ./work.pbl init
+PBL_DB=./work.pbl pbl info
+```
 
-pbl put users u1 '{"id":"u1","name":"Ada"}'
-pbl get users u1
+Write commands that create records initialize the database when needed. Read and
+lookup commands require the database directory to already exist.
 
-printf 'u2\tGrace\nu1\tAda\n' \
-  | pbl import names --format kv
+## Key/Value Table
 
+Import tab-separated rows:
+
+```sh
+printf 'u2\tGrace\nu1\tAda\n' | pbl import names --format kv
+```
+
+Scan returns records ordered by key:
+
+```sh
 pbl scan names
 ```
 
-Use a different database directory with `--db` or `PBL_DB`:
-
-```sh
-pbl --db ./local.pbl init
-PBL_DB=./local.pbl pbl collections
+```text
+u1	Ada
+u2	Grace
 ```
 
-Commands that write records create the database if needed. Read and lookup
-commands expect the database directory to already exist.
+Read one key:
+
+```sh
+pbl get names u1
+```
+
+Read many keys in input order. Missing keys are skipped by default:
+
+```sh
+printf 'u2\nmissing\nu1\n' | pbl get-many names
+```
+
+```text
+Grace
+Ada
+```
+
+Use `--missing null` when downstream tools need one output record per input key.
 
 ## Persistent Set
 
-Store one line per key:
+Store each line as both key and value:
 
 ```sh
 cat blocked_ids.txt | pbl import blocked --format line --key-mode value
 ```
 
-Keep only blocked IDs:
+Keep only records that exist in the set:
 
 ```sh
 cat incoming_ids.txt | pbl exists blocked
 ```
 
-Keep only IDs that are not blocked:
+Keep only records that are not in the set:
 
 ```sh
 cat incoming_ids.txt | pbl exists blocked --invert
 ```
 
-## Lookup Table
+## NDJSON Lookup And Join
 
-Import NDJSON keyed by `id`:
+Import JSON objects keyed by a field:
 
 ```sh
 cat users.ndjson | pbl import users --format ndjson --key-field id
 ```
 
-Join event records against that collection:
+Join JSON events with stored user objects:
 
 ```sh
 cat events.ndjson | pbl join users --on user_id --as user
 ```
 
 Missing joins attach `null` by default. Use `--missing skip` for inner-join
-style behavior. Stored values must be valid JSON for NDJSON joins.
+behavior or `--missing error` to fail if a lookup is missing.
 
-## Compacted Stream
+Stored values must be valid JSON when they are attached to NDJSON input.
+
+## Compound Ordered Keys
+
+Repeated `--key-field` flags build one key with `--key-sep` between parts. The
+default separator is `:`.
+
+```sh
+cat events.ndjson \
+  | pbl import events --format ndjson --key-field user_id --key-field ts
+```
+
+Scan one user's prefix:
+
+```sh
+pbl prefix events 'u123:'
+```
+
+Scan a half-open range:
+
+```sh
+pbl range events 'u123:2026-01-01' 'u123:2026-02-01'
+```
+
+Convenience aliases:
+
+```sh
+pbl keys events --prefix 'u123:'
+pbl values events --range-start 'u123:2026-01-01' --range-end 'u123:2026-02-01'
+```
+
+`keys` and `values` require both range flags when using a range.
+
+## Raw Values
+
+Use `raw` for one opaque value under one key:
+
+```sh
+cat payload.bin | pbl import artifacts --format raw --key build.tar
+pbl get artifacts build.tar --no-newline > build.tar
+```
+
+`raw` import and `put --stdin` read one complete value from stdin.
+
+## Compacted Streams
 
 Apply a compacted Kafka topic through `kcat`:
 
@@ -73,89 +144,22 @@ kcat -C -b "$BROKERS" -t "$TOPIC" -o beginning -e -f '%k\t%S\t%s\n' \
   | pbl apply users --format kcat --batch-size 5000 --batch-bytes 32MB
 ```
 
-Records with payload length `-1` are applied as deletes. Empty payloads with
-length `0` are stored as empty values.
+Payload length `-1` deletes the key. Payload length `0` stores an empty value.
 
-For transformed or binary-safe streams, emit frame records instead:
+For binary-safe producers, emit frame records instead:
 
 ```text
 P <key-bytes> <value-bytes>\n<key><value>
 D <key-bytes>\n<key>
 ```
 
-## Ordered Index
-
-Use repeated `--key-field` flags to build compound keys:
-
-```sh
-cat events.ndjson \
-  | pbl import events --format ndjson --key-field user_id --key-field ts
-```
-
-Scan one user's events:
-
-```sh
-pbl prefix events 'u123:'
-```
-
-Scan a half-open key range:
-
-```sh
-pbl range events 'u123:2026-01-01' 'u123:2026-02-01'
-```
-
-## Batch Retrieval
-
-Read keys from stdin and emit matching values in the same order:
-
-```sh
-cat ids.txt | pbl get-many users
-```
-
-Emit key/value records instead:
-
-```sh
-cat ids.txt | pbl get-many users --format kv
-```
-
-## Command Map
-
-Core:
-
-```text
-pbl init
-pbl put <collection> <key> <value>
-pbl get <collection> <key>
-pbl del <collection> <key>
-```
-
-Ordered reads:
-
-```text
-pbl scan <collection>
-pbl prefix <collection> <prefix>
-pbl range <collection> <start> <end>
-pbl keys <collection>
-pbl values <collection>
-```
-
-Streams:
-
-```text
-pbl import <collection> --format kv|line|ndjson|raw
-pbl apply <collection> --format kcat|frame
-pbl export <collection>
-pbl get-many <collection>
-pbl del-many <collection>
-pbl exists <collection>
-pbl lookup <collection>
-pbl join <collection>
-```
-
-Metadata:
+## Useful Commands
 
 ```text
 pbl collections
 pbl info
 pbl stats
+pbl export <collection>
+pbl del <collection> <key>
+pbl del-many <collection>
 ```

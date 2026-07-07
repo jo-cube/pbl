@@ -6,17 +6,18 @@ packages over a broad internal framework.
 ## Package Shape
 
 ```text
-cmd/pbl              binary entrypoint
-internal/app         Cobra command tree, IO wiring, exit-code mapping
-internal/buildinfo   version hook
-internal/codec       raw, line, KV, and NDJSON edge codecs
-internal/keyenc      physical Pebble key encoding and bounds
-internal/store       Pebble-backed collection operations
-tests/cli            functional use-case tests
-tests/perf           opt-in volume and benchmark checks
-scripts/install.sh   release asset installer
-.github/workflows    CI and release packaging
-Makefile             local build, test, run, install shortcuts
+cmd/pbl                binary entrypoint
+internal/app           Cobra command tree, IO wiring, formatting, exit codes
+internal/app/commands_* command families
+internal/buildinfo     version hook
+internal/codec         raw, line, KV, and NDJSON edge codecs
+internal/keyenc        physical Pebble key encoding and bounds
+internal/store         Pebble-backed collection operations
+tests/cli              functional use-case tests
+tests/perf             opt-in volume and benchmark checks
+scripts/install.sh     checksum-verifying release installer
+.github/workflows      CI and release packaging
+Makefile               local build, test, run, install shortcuts
 ```
 
 `internal/keyenc` is the only package that should construct physical Pebble
@@ -36,6 +37,8 @@ keys.
 
 ```sh
 make test
+go vet ./...
+go mod tidy -diff
 ```
 
 Quick CLI checks:
@@ -95,10 +98,12 @@ streaming or batching regressions.
 GitHub Actions builds and publishes release artifacts:
 
 - CI runs `make test` and `make build` on pushes to `main` and pull requests.
+- CI also runs `go vet ./...` and `go mod tidy -diff`.
 - CI cross-builds `pbl` for `linux/amd64`, `linux/arm64`, and `darwin/arm64`.
 - Pushing a `v*` tag publishes tarball release assets named
   `pbl_<goos>_<goarch>.tar.gz`.
-- `scripts/install.sh` downloads release assets from GitHub releases.
+- Release jobs also publish `.sha256` files, and `scripts/install.sh` verifies
+  them before installing.
 
 ## Boundaries
 
