@@ -41,6 +41,25 @@ go vet ./...
 go mod tidy -diff
 ```
 
+## Optional Agent Workflow
+
+This repo can use graphify for faster codebase navigation when it is installed.
+Its local skill files and `graphify-out/` outputs are intentionally git-ignored.
+
+In a fresh clone, build the local graph before relying on graph queries:
+
+```sh
+graphify .
+```
+
+After code changes, refresh it with:
+
+```sh
+graphify update .
+```
+
+## Local Workflow
+
 Quick CLI checks:
 
 ```sh
