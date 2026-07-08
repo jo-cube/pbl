@@ -72,10 +72,17 @@ func (c *cli) collectionsCommand() *cobra.Command {
 			}
 			for _, name := range names {
 				if format == "ndjson" {
-					b, _ := json.Marshal(map[string]string{"name": name})
-					fmt.Fprintln(c.stdout, string(b))
+					b, err := json.Marshal(map[string]string{"name": name})
+					if err != nil {
+						return runtimeErr(err)
+					}
+					if _, err := fmt.Fprintln(c.stdout, string(b)); err != nil {
+						return runtimeErr(err)
+					}
 				} else {
-					fmt.Fprintln(c.stdout, name)
+					if _, err := fmt.Fprintln(c.stdout, name); err != nil {
+						return runtimeErr(err)
+					}
 				}
 			}
 			return nil
@@ -105,11 +112,15 @@ func (c *cli) infoCommand() *cobra.Command {
 				return storageErr(err)
 			}
 			if format == "ndjson" {
-				return json.NewEncoder(c.stdout).Encode(info)
+				return runtimeWrap(json.NewEncoder(c.stdout).Encode(info))
 			}
-			fmt.Fprintf(c.stdout, "path: %s\nstorage_format_version: %d\ncollections: %d\n", info.Path, info.StorageFormatVersion, info.CollectionCount)
+			if _, err := fmt.Fprintf(c.stdout, "path: %s\nstorage_format_version: %d\ncollections: %d\n", info.Path, info.StorageFormatVersion, info.CollectionCount); err != nil {
+				return runtimeErr(err)
+			}
 			if info.CreatedAt != "" {
-				fmt.Fprintf(c.stdout, "created_at: %s\n", info.CreatedAt)
+				if _, err := fmt.Fprintf(c.stdout, "created_at: %s\n", info.CreatedAt); err != nil {
+					return runtimeErr(err)
+				}
 			}
 			return nil
 		},
@@ -139,11 +150,15 @@ func (c *cli) statsCommand() *cobra.Command {
 				return storageErr(err)
 			}
 			if format == "ndjson" {
-				return json.NewEncoder(c.stdout).Encode(stats)
+				return runtimeWrap(json.NewEncoder(c.stdout).Encode(stats))
 			}
-			fmt.Fprintf(c.stdout, "path: %s\ndisk_used: %d\n", stats.Path, stats.DiskUsed)
+			if _, err := fmt.Fprintf(c.stdout, "path: %s\ndisk_used: %d\n", stats.Path, stats.DiskUsed); err != nil {
+				return runtimeErr(err)
+			}
 			if raw {
-				fmt.Fprint(c.stdout, stats.Raw)
+				if _, err := fmt.Fprint(c.stdout, stats.Raw); err != nil {
+					return runtimeErr(err)
+				}
 			}
 			return nil
 		},

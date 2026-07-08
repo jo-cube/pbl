@@ -377,19 +377,27 @@ func WriteLine(w io.Writer, value []byte) error {
 }
 
 func WriteNDJSONValue(w io.Writer, key, value []byte, includeKey bool) error {
-	if !includeKey {
-		if !json.Valid(value) {
-			return fmt.Errorf("value is not valid JSON")
-		}
-		return WriteLine(w, value)
-	}
-	var raw any
-	if err := json.Unmarshal(value, &raw); err != nil {
-		return fmt.Errorf("value is not valid JSON: %w", err)
-	}
-	out, err := json.Marshal(map[string]any{"_key": string(key), "_value": raw})
+	out, err := FormatNDJSONValue(key, value, includeKey)
 	if err != nil {
 		return err
 	}
 	return WriteLine(w, out)
+}
+
+func FormatNDJSONValue(key, value []byte, includeKey bool) ([]byte, error) {
+	if !includeKey {
+		if !json.Valid(value) {
+			return nil, fmt.Errorf("value is not valid JSON")
+		}
+		return append([]byte(nil), value...), nil
+	}
+	var raw any
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return nil, fmt.Errorf("value is not valid JSON: %w", err)
+	}
+	out, err := json.Marshal(map[string]any{"_key": string(key), "_value": raw})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }

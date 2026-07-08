@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -55,6 +56,14 @@ const userAdaNDJSON = `{"id":"u1","name":"Ada"}
 
 const loginEventNDJSON = `{"event":"login","user_id":"u1"}
 `
+
+var errBoom = errors.New("boom")
+
+type errWriter struct{}
+
+func (errWriter) Write([]byte) (int, error) {
+	return 0, errBoom
+}
 
 func run(t *testing.T, db string, stdin string, args ...string) (string, string, int) {
 	t.Helper()
@@ -123,6 +132,29 @@ func TestCLIStreamFailureAfterOutputIsPartial(t *testing.T) {
 	out, errText, code := run(t, db, "u1\nmissing\n", "get-many", "users", "--missing", "error")
 	if out != "Ada\n" || !strings.Contains(errText, "not found") || code != 6 {
 		t.Fatalf("get-many partial out=%q err=%q code=%d", out, errText, code)
+	}
+}
+
+func TestCLIInvalidNDJSONScanIsBadInput(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "db")
+	if out, err, code := run(t, db, "a\tplain text\n", "import", "users", "--format", "kv"); out != "" || err != "" || code != 0 {
+		t.Fatalf("import out=%q err=%q code=%d", out, err, code)
+	}
+	out, errText, code := run(t, db, "", "scan", "users", "--format", "ndjson")
+	if out != "" || !strings.Contains(errText, "value is not valid JSON") || code != 4 {
+		t.Fatalf("scan invalid json out=%q err=%q code=%d", out, errText, code)
+	}
+}
+
+func TestCLIWriteErrorIsRuntimeError(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "db")
+	if out, err, code := run(t, db, "", "init"); out != "" || err != "" || code != 0 {
+		t.Fatalf("init out=%q err=%q code=%d", out, err, code)
+	}
+	var stderr bytes.Buffer
+	code := Main([]string{"--db", db, "get", "users", "missing", "--missing", "null"}, strings.NewReader(""), errWriter{}, &stderr)
+	if code != 1 || !strings.Contains(stderr.String(), "boom") {
+		t.Fatalf("write failure stderr=%q code=%d", stderr.String(), code)
 	}
 }
 

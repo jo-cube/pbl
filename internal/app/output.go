@@ -46,7 +46,7 @@ func (c *cli) writeLookup(rec codec.Record, value []byte, inputFormat, asField s
 		if value == nil {
 			return nil
 		}
-		return codec.WriteLine(c.stdout, value)
+		return runtimeWrap(codec.WriteLine(c.stdout, value))
 	}
 	obj := rec.JSON
 	if obj == nil {
@@ -67,25 +67,29 @@ func (c *cli) writeLookup(rec codec.Record, value []byte, inputFormat, asField s
 	if err != nil {
 		return runtimeErr(err)
 	}
-	return codec.WriteLine(c.stdout, out)
+	return runtimeWrap(codec.WriteLine(c.stdout, out))
 }
 
 func (c *cli) writeScanRecord(key, value []byte, format string, keysOnly, valuesOnly, includeKey bool) error {
 	if keysOnly {
-		return codec.WriteLine(c.stdout, key)
+		return runtimeWrap(codec.WriteLine(c.stdout, key))
 	}
 	if valuesOnly {
 		if format == "raw" {
 			_, err := c.stdout.Write(value)
-			return err
+			return runtimeWrap(err)
 		}
-		return codec.WriteLine(c.stdout, value)
+		return runtimeWrap(codec.WriteLine(c.stdout, value))
 	}
 	switch format {
 	case "kv":
-		return codec.WriteKV(c.stdout, key, value)
+		return runtimeWrap(codec.WriteKV(c.stdout, key, value))
 	case "ndjson":
-		return badInputErr(codec.WriteNDJSONValue(c.stdout, key, value, includeKey))
+		out, err := codec.FormatNDJSONValue(key, value, includeKey)
+		if err != nil {
+			return badInputErr(err)
+		}
+		return runtimeWrap(codec.WriteLine(c.stdout, out))
 	case "raw":
 		return usagef("raw export requires --values-only")
 	default:
@@ -97,17 +101,21 @@ func (c *cli) writeRecord(key, value []byte, format string, withKey, newline boo
 	switch format {
 	case "raw":
 		if _, err := c.stdout.Write(value); err != nil {
-			return err
+			return runtimeWrap(err)
 		}
 		if newline {
 			_, err := fmt.Fprintln(c.stdout)
-			return err
+			return runtimeWrap(err)
 		}
 		return nil
 	case "kv":
-		return codec.WriteKV(c.stdout, key, value)
+		return runtimeWrap(codec.WriteKV(c.stdout, key, value))
 	case "ndjson":
-		return badInputErr(codec.WriteNDJSONValue(c.stdout, key, value, withKey))
+		out, err := codec.FormatNDJSONValue(key, value, withKey)
+		if err != nil {
+			return badInputErr(err)
+		}
+		return runtimeWrap(codec.WriteLine(c.stdout, out))
 	default:
 		return usagef("unknown format %q", format)
 	}
@@ -121,15 +129,15 @@ func (c *cli) handleMissing(policy string, key []byte, format string, withKey bo
 		return nil
 	case "null":
 		if format == "kv" {
-			return codec.WriteKV(c.stdout, key, []byte("null"))
+			return runtimeWrap(codec.WriteKV(c.stdout, key, []byte("null")))
 		}
 		if format == "ndjson" && withKey {
 			out, _ := json.Marshal(map[string]any{"_key": string(key), "_value": nil})
-			fmt.Fprintln(c.stdout, string(out))
-			return nil
+			_, err := fmt.Fprintln(c.stdout, string(out))
+			return runtimeWrap(err)
 		}
-		fmt.Fprintln(c.stdout, "null")
-		return nil
+		_, err := fmt.Fprintln(c.stdout, "null")
+		return runtimeWrap(err)
 	default:
 		return usagef("unknown missing policy %q", policy)
 	}
