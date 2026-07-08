@@ -44,7 +44,7 @@ curl -fsSL https://raw.githubusercontent.com/jo-cube/pbl/main/scripts/install.sh
 Install a specific version:
 
 ```sh
-VERSION=v0.1.0 ./scripts/install.sh
+curl -fsSL https://raw.githubusercontent.com/jo-cube/pbl/main/scripts/install.sh | VERSION=v0.1.0 sh
 ```
 
 Release archives are verified with SHA-256 checksums. Published platforms:
@@ -53,6 +53,8 @@ Release archives are verified with SHA-256 checksums. Published platforms:
 - `linux/arm64`
 - `darwin/arm64`
 
+Other platforms can build from source with Go.
+
 ## Quick Use
 
 Pick a database directory with `--db` or `PBL_DB`. If neither is set, `pbl` uses
@@ -60,7 +62,8 @@ Pick a database directory with `--db` or `PBL_DB`. If neither is set, `pbl` uses
 
 ```sh
 pbl --db ./local.pbl init
-PBL_DB=./local.pbl pbl collections
+export PBL_DB=./local.pbl
+pbl collections
 ```
 
 Common jobs:

@@ -26,6 +26,13 @@ Write commands that create records initialize the database if needed. Read,
 delete, metadata, and stream lookup commands require the database directory to
 exist.
 
+## Durability
+
+Single-key writes sync by default. Bulk commands (`import`, `apply`, and
+`del-many`) batch records and do not sync each batch unless `--sync` is set.
+Use `--no-sync` on single-key writes when throughput matters more than crash
+durability.
+
 ## Exit Codes
 
 ```text
@@ -53,6 +60,7 @@ key<TAB>value
 `ndjson` input is one JSON object per line. Repeated `--key-field` flags build a
 compound key joined with `--key-sep`, which defaults to `:`. String, number,
 boolean, and null key fields are accepted; object and array key fields are not.
+Import and stream lookup paths reject empty user keys.
 
 ## Core Commands
 
