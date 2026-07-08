@@ -73,9 +73,22 @@ func usagef(f string, a ...any) error { return &appError{kind: kindUsage, msg: f
 func runtimeErr(err error) error      { return &appError{kind: kindRuntime, err: err} }
 func storageErr(err error) error      { return &appError{kind: kindStorage, err: err} }
 
+func runtimeWrap(err error) error {
+	if err == nil {
+		return nil
+	}
+	if isAppError(err) {
+		return err
+	}
+	return runtimeErr(err)
+}
+
 func storageWrap(err error) error {
 	if err == nil {
 		return nil
+	}
+	if isAppError(err) {
+		return err
 	}
 	return storageErr(err)
 }

@@ -32,9 +32,9 @@ func (c *cli) keysValuesCommand(mode string) *cobra.Command {
 			defer s.Close()
 			fn := func(r store.Record) error {
 				if mode == "keys" {
-					return codec.WriteLine(c.stdout, r.Key)
+					return runtimeWrap(codec.WriteLine(c.stdout, r.Key))
 				}
-				return codec.WriteLine(c.stdout, r.Value)
+				return runtimeWrap(codec.WriteLine(c.stdout, r.Value))
 			}
 			opts := store.ScanOptions{Limit: limit}
 			if prefix != "" {
@@ -189,7 +189,7 @@ func (c *cli) existsCommand() *cobra.Command {
 					return notFoundf("not found: %s", rec.Key)
 				}
 				if found != invert {
-					return codec.WriteLine(c.stdout, rec.Raw)
+					return runtimeWrap(codec.WriteLine(c.stdout, rec.Raw))
 				}
 				return nil
 			})
