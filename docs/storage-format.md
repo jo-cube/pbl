@@ -42,6 +42,10 @@ For collection `users` and user key `u1`, the physical key is:
 0x01 0x05 "users" 0x00 "u1"
 ```
 
+Storage format v1 stores the collection name directly in each data key. This is
+intentionally simple and keeps collection bounds self-contained; changing it
+requires a format bump and migration plan.
+
 Ordering inside a collection follows raw user-key byte order. This is what
 makes `scan`, `prefix`, and half-open `range` efficient.
 
