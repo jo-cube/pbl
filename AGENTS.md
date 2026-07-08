@@ -60,12 +60,16 @@ go test ./tests/perf -run '^$' -bench . -benchtime=1x
 
 ## graphify
 
-This project has a knowledge graph at `graphify-out/`.
+This project may have a local knowledge graph at `graphify-out/`. The directory
+is generated and git-ignored, so fresh clones will not have it until an agent or
+developer builds it locally.
 
 Rules:
 
 - For codebase questions, first run `graphify query "<question>"` when
   `graphify-out/graph.json` exists.
+- If `graphify-out/graph.json` is missing and graphify is available, run
+  `graphify .` before relying on graph queries.
 - Use `graphify path "<A>" "<B>"` for relationships and
   `graphify explain "<concept>"` for focused concepts.
 - Dirty graph files are expected after hooks or incremental updates; they are

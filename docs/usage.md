@@ -9,8 +9,9 @@ See [cli.md](cli.md) for every flag.
 Use `--db` for one command or `PBL_DB` for a shell session:
 
 ```sh
-pbl --db ./work.pbl init
-PBL_DB=./work.pbl pbl info
+export PBL_DB=./work.pbl
+pbl init
+pbl info
 ```
 
 Write commands that create records initialize the database when needed. Read and
