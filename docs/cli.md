@@ -187,7 +187,7 @@ key<TAB>payload-length<TAB>payload
 
 `payload-length` greater than zero stores that many payload bytes. `0` stores an
 empty value. `-1` deletes the key. Each record ends with a newline after the
-payload.
+payload; the final record may also end at EOF immediately after the payload.
 
 Example compacted topic import:
 
