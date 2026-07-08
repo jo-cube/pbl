@@ -14,6 +14,18 @@ func TestDataKeyRoundTrip(t *testing.T) {
 	}
 }
 
+func TestStorageFormatV1Keys(t *testing.T) {
+	if got, want := MetadataKey("format-version"), []byte{0x00, 'f', 'o', 'r', 'm', 'a', 't', '-', 'v', 'e', 'r', 's', 'i', 'o', 'n'}; !bytes.Equal(got, want) {
+		t.Fatalf("MetadataKey() = %v, want %v", got, want)
+	}
+	if got, want := CollectionMetaKey("users"), []byte{0x00, 'c', 'o', 'l', 'l', 'e', 'c', 't', 'i', 'o', 'n', '/', 'u', 's', 'e', 'r', 's'}; !bytes.Equal(got, want) {
+		t.Fatalf("CollectionMetaKey() = %v, want %v", got, want)
+	}
+	if got, want := DataKey("users", []byte("u1")), []byte{0x01, 0x05, 'u', 's', 'e', 'r', 's', 0x00, 'u', '1'}; !bytes.Equal(got, want) {
+		t.Fatalf("DataKey() = %v, want %v", got, want)
+	}
+}
+
 func TestNextPrefix(t *testing.T) {
 	tests := []struct {
 		in   []byte
