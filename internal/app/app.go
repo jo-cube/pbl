@@ -70,8 +70,14 @@ func (c *cli) command() *cobra.Command {
 		c.dbPath = env
 	}
 	root := &cobra.Command{
-		Use:           "pbl",
-		Short:         "Pebble-backed key-value CLI",
+		Use:   "pbl",
+		Short: "Pebble-backed key-value CLI",
+		Long: `pbl stores ordered byte keys and opaque byte values in one local Pebble
+directory. Collections are logical keyspaces inside that one directory.
+
+stdout is data; diagnostics go to stderr. Stream commands preserve input order.
+Write commands that create records initialize the database when needed. Read,
+delete, metadata, and lookup commands require the database directory to exist.`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Version:       buildinfo.Version(),
@@ -81,8 +87,8 @@ func (c *cli) command() *cobra.Command {
 	}
 	root.SetVersionTemplate("pbl {{.Version}}\n")
 	root.CompletionOptions.DisableDefaultCmd = true
-	root.PersistentFlags().StringVarP(&c.dbPath, "db", "d", c.dbPath, "database directory")
-	root.PersistentFlags().BoolVar(&c.quiet, "quiet", false, "suppress diagnostics")
+	root.PersistentFlags().StringVarP(&c.dbPath, "db", "d", c.dbPath, "database directory; overrides PBL_DB")
+	root.PersistentFlags().BoolVar(&c.quiet, "quiet", false, "suppress diagnostics on stderr")
 	root.AddCommand(
 		c.initCommand(),
 		c.putCommand(),
