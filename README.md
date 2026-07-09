@@ -137,7 +137,7 @@ pbl get-many <collection>
 pbl del-many <collection>
 pbl exists <collection>
 pbl lookup <collection>
-pbl join <collection>
+pbl join <collection> --on <field> --as <field>
 pbl apply <collection> --format kcat|frame
 ```
 
@@ -152,7 +152,10 @@ pbl stats
 ## Docs
 
 - [Usage guide](docs/usage.md): practical workflows with examples.
-- [CLI reference](docs/cli.md): commands, flags, formats, and exit codes.
+- [CLI reference](docs/cli.md): global flags, formats, exit codes, and command
+  map.
+- [Command manual](docs/commands/README.md): per-command flags, parameters, and
+  behind-the-scenes behavior.
 - [Storage format](docs/storage-format.md): compatibility-sensitive physical key
   layout.
 - [Development notes](docs/development.md): package shape, checks, and project
