@@ -20,7 +20,8 @@ that version check before normal reads and writes.
 ## put
 
 ```text
-pbl put <collection> <key> <value> [--stdin] [--sync|--no-sync]
+pbl put <collection> <key> <value> [--sync|--no-sync]
+pbl put <collection> <key> --stdin [--sync|--no-sync]
 ```
 
 Stores or replaces one value. Without `--stdin`, `<value>` is the third

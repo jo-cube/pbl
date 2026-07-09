@@ -81,8 +81,8 @@ pbl join <collection> --on <field> --as <field>
 ```
 
 Joins NDJSON input with stored JSON objects. `--on` names the input field used as
-the lookup key. `--as` names the output field receiving the stored JSON value.
-Use repeated `--key-field` flags before `--on` when the stored collection uses a
-compound key.
+the lookup key, or the final part of a compound key. `--as` names the output
+field receiving the stored JSON value. Use repeated `--key-field` flags for
+leading compound-key parts when the stored collection uses a compound key.
 
 Behind the scenes: `join` is the NDJSON-only convenience form of `lookup`.

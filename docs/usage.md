@@ -16,8 +16,8 @@ pbl info
 ```
 
 Write commands that create records initialize the database when needed. Read,
-delete, metadata, and lookup commands require the database directory to already
-exist.
+delete, metadata, and stream lookup commands require the database directory to
+already exist.
 
 ## Key/Value Table
 
