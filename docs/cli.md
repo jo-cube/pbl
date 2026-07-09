@@ -3,6 +3,9 @@
 `pbl` follows a narrow rule: data goes to stdout, diagnostics go to stderr.
 Commands are meant to compose with pipes and shell redirection.
 
+For expanded command behavior, parameters, and behind-the-scenes notes, see the
+[command manual](commands/README.md).
+
 ```text
 pbl [global flags] <command> [command flags] [args]
 ```
@@ -26,13 +29,6 @@ Write commands that create records initialize the database if needed. Read,
 delete, metadata, and stream lookup commands require the database directory to
 exist.
 
-## Durability
-
-Single-key writes sync by default. Bulk commands (`import`, `apply`, and
-`del-many`) batch records and do not sync each batch unless `--sync` is set.
-Use `--no-sync` on single-key writes when throughput matters more than crash
-durability.
-
 ## Exit Codes
 
 ```text
@@ -44,6 +40,13 @@ durability.
 5 storage/open/lock error
 6 partial failure after stdout output began
 ```
+
+## Durability
+
+Single-key writes sync by default. Bulk commands (`import`, `apply`, and
+`del-many`) batch records and do not sync each batch unless `--sync` is set.
+Use `--no-sync` on single-key writes when throughput matters more than crash
+durability.
 
 ## Formats
 
@@ -62,214 +65,59 @@ compound key joined with `--key-sep`, which defaults to `:`. String, number,
 boolean, and null key fields are accepted; object and array key fields are not.
 Import and stream lookup paths reject empty user keys.
 
-## Core Commands
+## Command Map
+
+Core commands:
 
 ```text
-pbl init [--if-not-exists]
-```
-
-Creates the database and writes storage metadata. Success writes no stdout.
-
-```text
-pbl put <collection> <key> <value> [--stdin] [--sync|--no-sync]
-```
-
-Stores or replaces a value. `--stdin` reads the value bytes from stdin.
-
-```text
+pbl init
+pbl put <collection> <key> <value>
 pbl get <collection> <key>
-  [--format raw|kv|ndjson]
-  [--with-key]
-  [--missing error|skip|null]
-  [--no-newline]
+pbl del <collection> <key>
 ```
 
-Default output is the raw value followed by a newline. A missing key exits `2`
-unless `--missing skip` or `--missing null` is selected. Missing null output
-matches the selected format: `null`, `key<TAB>null`, or NDJSON `null`. With
-`--format ndjson --with-key`, it emits `{"_key": "...", "_value": null}`.
+See [commands/core.md](commands/core.md).
 
-```text
-pbl del <collection> <key> [--fail-missing] [--sync|--no-sync]
-```
-
-Deletes a key. Missing keys are success by default.
-
-## Ordered Reads
+Ordered reads:
 
 ```text
 pbl scan <collection>
 pbl prefix <collection> <prefix>
 pbl range <collection> <start> <end>
-```
-
-Range scans are half-open:
-
-```text
-start <= key < end
-```
-
-Shared flags:
-
-```text
---format kv|ndjson|raw
---limit <n>
---keys-only
---values-only
---include-key
-```
-
-Default output is ordered `key<TAB>value` records.
-`--format raw` requires `--values-only`.
-
-Convenience aliases:
-
-```text
-pbl keys <collection> [--prefix <p>] [--range-start <s>] [--range-end <e>] [--limit <n>]
-pbl values <collection> [--prefix <p>] [--range-start <s>] [--range-end <e>] [--limit <n>]
-```
-
-`--range-start` and `--range-end` must be used together.
-
-## Import And Export
-
-```text
-pbl import <collection> --format kv|line|ndjson|raw
-```
-
-Useful flags:
-
-```text
---key-mode value|line-number
---key <key>
---key-field <field>
---key-sep <sep>
---batch-size <n>
---batch-bytes <size>
---replace
---ignore-duplicates
---fail-on-duplicate
---sync|--no-sync
-```
-
-Examples:
-
-```sh
-printf 'u1\tAda\nu2\tGrace\n' | pbl import users --format kv
-cat blocked.txt | pbl import blocked --format line --key-mode value
-cat users.ndjson | pbl import users --format ndjson --key-field id
-```
-
-`raw` import stores stdin under `--key`.
-Imports replace existing keys by default. `--replace` is accepted for explicit
-default behavior. `--ignore-duplicates` keeps the first value already present or
-seen in the current input stream. `--fail-on-duplicate` exits with bad input for
-either existing keys or duplicate keys in the same stream.
-
-```text
+pbl keys <collection>
+pbl values <collection>
 pbl export <collection>
 ```
 
-Export uses the same scan flags.
+See [commands/ordered-reads.md](commands/ordered-reads.md).
+
+Import and apply:
 
 ```text
+pbl import <collection> --format kv|line|ndjson|raw
 pbl apply <collection> --format kcat|frame
 ```
 
-Applies an ordered stream of puts and deletes. Success writes no stdout.
+See [commands/import-apply.md](commands/import-apply.md).
 
-Useful flags:
-
-```text
---batch-size <n>
---batch-bytes <size>
---stats
---sync|--no-sync
-```
-
-`kcat` format is:
-
-```text
-key<TAB>payload-length<TAB>payload
-```
-
-`payload-length` greater than zero stores that many payload bytes. `0` stores an
-empty value. `-1` deletes the key. Each record ends with a newline after the
-payload; the final record may also end at EOF immediately after the payload.
-
-Example compacted topic import:
-
-```sh
-kcat -C -b "$BROKERS" -t "$TOPIC" -o beginning -e -f '%k\t%S\t%s\n' \
-  | pbl apply users --format kcat --batch-size 5000 --batch-bytes 32MB
-```
-
-`frame` format is binary-safe:
-
-```text
-P <key-bytes> <value-bytes>\n<key><value>
-D <key-bytes>\n<key>
-```
-
-## Stream Commands
+Stream commands:
 
 ```text
 pbl get-many <collection>
-  [--input-format line|ndjson]
-  [--key-field <field>]
-  [--format raw|kv|ndjson]
-  [--with-key]
-  [--missing skip|null|error]
-```
-
-Reads lookup keys from stdin and emits results in input order. Empty input keys
-are bad input.
-
-```text
 pbl del-many <collection>
-  [--input-format line|ndjson]
-  [--key-field <field>]
-  [--batch-size <n>]
-  [--batch-bytes <size>]
-  [--sync|--no-sync]
-```
-
-Deletes keys from stdin in batches. Success writes no stdout.
-
-```text
 pbl exists <collection>
-  [--input-format line|ndjson]
-  [--key-field <field>]
-  [--invert]
-  [--missing skip|error]
-```
-
-Filters stdin by collection membership and emits the original input records.
-
-```text
 pbl lookup <collection>
-  [--input-format line|ndjson]
-  [--key-field <field>]
-  [--key-sep <sep>]
-  [--as <field>]
-  [--missing null|skip|error]
-```
-
-Line mode emits stored values. NDJSON mode can attach the stored JSON value
-under `--as`. Stored values must be valid JSON when attached to NDJSON input.
-
-```text
 pbl join <collection> --on <field> --as <field>
 ```
 
-`join` is the NDJSON-friendly form of `lookup`.
+See [commands/streams.md](commands/streams.md).
 
-## Metadata Commands
+Metadata:
 
 ```text
-pbl collections [--format line|ndjson]
-pbl info [--format text|ndjson]
-pbl stats [--format text|ndjson] [--raw]
+pbl collections
+pbl info
+pbl stats
 ```
 
-Collection listing comes from metadata, not from data-key ordering.
+See [commands/metadata.md](commands/metadata.md).

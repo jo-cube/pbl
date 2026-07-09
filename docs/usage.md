@@ -2,7 +2,8 @@
 
 This guide shows the workflows `pbl` is meant to make easy: local lookups,
 persistent sets, NDJSON joins, ordered scans, and compacted stream materializing.
-See [cli.md](cli.md) for every flag.
+See [cli.md](cli.md) for the CLI contract and [commands/](commands/) for every
+command flag.
 
 ## Database Path
 
@@ -14,8 +15,9 @@ pbl init
 pbl info
 ```
 
-Write commands that create records initialize the database when needed. Read and
-lookup commands require the database directory to already exist.
+Write commands that create records initialize the database when needed. Read,
+delete, metadata, and stream lookup commands require the database directory to
+already exist.
 
 ## Key/Value Table
 

@@ -167,8 +167,14 @@ func TestCLIRootHelpAndVersion(t *testing.T) {
 	out.Reset()
 	err.Reset()
 	code = Main([]string{"--help"}, strings.NewReader(""), &out, &err)
-	if code != 0 || strings.Count(out.String(), "Usage:") != 1 || err.String() != "" {
+	if code != 0 || strings.Count(out.String(), "Usage:") != 1 || !strings.Contains(out.String(), "stdout is data") || err.String() != "" {
 		t.Fatalf("help out=%q err=%q code=%d", out.String(), err.String(), code)
+	}
+	out.Reset()
+	err.Reset()
+	code = Main([]string{"import", "--help"}, strings.NewReader(""), &out, &err)
+	if code != 0 || !strings.Contains(out.String(), "Formats decide how input becomes keys and values") || !strings.Contains(out.String(), "--key-field") || err.String() != "" {
+		t.Fatalf("import help out=%q err=%q code=%d", out.String(), err.String(), code)
 	}
 }
 

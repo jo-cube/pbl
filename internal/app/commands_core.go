@@ -14,7 +14,11 @@ func (c *cli) initCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Initialize a database",
-		Args:  exactArgs(0),
+		Long: `Initialize the Pebble directory and write pbl storage metadata.
+
+Success writes no stdout. Use --if-not-exists in scripts that should tolerate an
+already-initialized compatible database.`,
+		Args: exactArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			s, err := c.open()
 			if err != nil {
@@ -38,6 +42,11 @@ func (c *cli) putCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "put <collection> <key> <value>",
 		Short: "Store a key-value pair",
+		Long: `Store or replace one key in a collection.
+
+Without --stdin, the value is the third argument. With --stdin, pbl reads all
+stdin bytes as the value, including newlines. Single-key writes sync by default;
+use --no-sync only when throughput matters more than crash durability.`,
 		Args: func(cmd *cobra.Command, args []string) error {
 			if stdinValue {
 				return wantArgs(args, 2)
@@ -77,7 +86,12 @@ func (c *cli) getCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "get <collection> <key>",
 		Short: "Read a value",
-		Args:  exactArgs(2),
+		Long: `Read one key from a collection.
+
+Default output is the raw value plus a newline. Use --format when downstream
+tools need key/value or NDJSON output. Missing keys exit 2 by default; --missing
+can skip them or emit a null-shaped record instead.`,
+		Args: exactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := validateOneOf("format", format, "raw", "kv", "ndjson"); err != nil {
 				return err
@@ -101,10 +115,10 @@ func (c *cli) getCommand() *cobra.Command {
 			return c.writeRecord(key, value, format, withKey, !noNewline)
 		},
 	}
-	cmd.Flags().StringVar(&format, "format", "raw", "raw|kv|ndjson")
-	cmd.Flags().BoolVar(&withKey, "with-key", false, "include key")
-	cmd.Flags().StringVar(&missing, "missing", "error", "error|skip|null")
-	cmd.Flags().BoolVar(&noNewline, "no-newline", false, "do not append newline for raw")
+	cmd.Flags().StringVar(&format, "format", "raw", "raw|kv|ndjson output")
+	cmd.Flags().BoolVar(&withKey, "with-key", false, "include key in output")
+	cmd.Flags().StringVar(&missing, "missing", "error", "error|skip|null for missing keys")
+	cmd.Flags().BoolVar(&noNewline, "no-newline", false, "suppress raw output newline")
 	return cmd
 }
 
@@ -114,7 +128,11 @@ func (c *cli) delCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "del <collection> <key>",
 		Short: "Delete a key",
-		Args:  exactArgs(2),
+		Long: `Delete one key from a collection.
+
+Missing keys are success by default so delete is idempotent in scripts. Add
+--fail-missing when absence should exit 2. Single-key deletes sync by default.`,
+		Args: exactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := validateSync(sync); err != nil {
 				return err

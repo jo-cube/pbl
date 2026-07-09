@@ -17,9 +17,15 @@ func (c *cli) importCommand() *cobra.Command {
 	var sync syncOptions
 	var replace, ignoreDup, failDup bool
 	cmd := &cobra.Command{
-		Use:   "import <collection>",
+		Use:   "import <collection> --format <format>",
 		Short: "Import records from stdin",
-		Args:  exactArgs(1),
+		Long: `Import records from stdin into a collection.
+
+Formats decide how input becomes keys and values: kv splits on the first tab,
+line stores each line, ndjson reads fields from JSON objects, and raw stores all
+stdin bytes under --key. Import writes are batched and not synced unless --sync
+is set.`,
+		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format == "" {
 				return usagef("usage: pbl import <collection> --format <format>")
@@ -112,16 +118,16 @@ func (c *cli) importCommand() *cobra.Command {
 			}
 		},
 	}
-	cmd.Flags().StringVar(&format, "format", "", "kv|line|ndjson|raw")
-	cmd.Flags().StringVar(&keyMode, "key-mode", "value", "value|line-number")
-	cmd.Flags().StringVar(&key, "key", "", "raw key")
+	cmd.Flags().StringVar(&format, "format", "", "kv|line|ndjson|raw input")
+	cmd.Flags().StringVar(&keyMode, "key-mode", "value", "value|line-number key mode for line input")
+	cmd.Flags().StringVar(&key, "key", "", "key for raw input")
 	cmd.Flags().StringVar(&keySep, "key-sep", ":", "compound key separator")
-	cmd.Flags().StringArrayVar(&fields, "key-field", nil, "ndjson key field")
-	cmd.Flags().IntVar(&batchSize, "batch-size", 1000, "records per batch")
-	cmd.Flags().StringVar(&batchBytesText, "batch-bytes", "4MB", "bytes per batch")
+	cmd.Flags().StringArrayVar(&fields, "key-field", nil, "ndjson key field; repeat for compound keys")
+	cmd.Flags().IntVar(&batchSize, "batch-size", 1000, "max records per batch")
+	cmd.Flags().StringVar(&batchBytesText, "batch-bytes", "4MB", "approx bytes per batch")
 	cmd.Flags().BoolVar(&replace, "replace", false, "replace existing values")
-	cmd.Flags().BoolVar(&ignoreDup, "ignore-duplicates", false, "keep existing values")
-	cmd.Flags().BoolVar(&failDup, "fail-on-duplicate", false, "fail on duplicate")
+	cmd.Flags().BoolVar(&ignoreDup, "ignore-duplicates", false, "keep first value for duplicate keys")
+	cmd.Flags().BoolVar(&failDup, "fail-on-duplicate", false, "exit 4 on duplicate keys")
 	addSyncFlags(cmd, &sync)
 	return cmd
 }
@@ -177,9 +183,15 @@ func (c *cli) applyCommand() *cobra.Command {
 	var sync syncOptions
 	var stats bool
 	cmd := &cobra.Command{
-		Use:   "apply <collection>",
+		Use:   "apply <collection> --format <format>",
 		Short: "Apply put/delete records from stdin",
-		Args:  exactArgs(1),
+		Long: `Apply an ordered stream of puts and deletes to a collection.
+
+The kcat format materializes compacted Kafka topics. The frame format is
+binary-safe for custom producers. Writes are batched and not synced unless
+--sync is set. Success writes no stdout; --stats writes ingest metrics to
+stderr.`,
+		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format == "" {
 				return usagef("usage: pbl apply <collection> --format <format>")
@@ -216,9 +228,9 @@ func (c *cli) applyCommand() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&format, "format", "", "kcat|frame")
-	cmd.Flags().IntVar(&batchSize, "batch-size", 1000, "records per batch")
-	cmd.Flags().StringVar(&batchBytesText, "batch-bytes", "4MB", "bytes per batch")
+	cmd.Flags().StringVar(&format, "format", "", "kcat|frame input")
+	cmd.Flags().IntVar(&batchSize, "batch-size", 1000, "max records per batch")
+	cmd.Flags().StringVar(&batchBytesText, "batch-bytes", "4MB", "approx bytes per batch")
 	cmd.Flags().BoolVar(&stats, "stats", false, "write ingest stats to stderr")
 	addSyncFlags(cmd, &sync)
 	return cmd
