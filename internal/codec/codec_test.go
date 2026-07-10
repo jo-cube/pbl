@@ -1,7 +1,10 @@
 package codec
 
 import (
+	"bufio"
 	"bytes"
+	"errors"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -34,37 +37,54 @@ func TestLineReaderLargeLine(t *testing.T) {
 	}
 }
 
+func TestReadUntilEnforcesContentLimit(t *testing.T) {
+	br := bufio.NewReaderSize(strings.NewReader("abcd\n"), 2)
+	if _, _, err := readUntil(br, '\n', 3); !errors.Is(err, ErrRecordTooLarge) {
+		t.Fatalf("oversized read err = %v", err)
+	}
+
+	br = bufio.NewReaderSize(strings.NewReader("abc\r\n"), 2)
+	line, _, err := readUntil(br, '\n', 4)
+	if err != nil || string(TrimLine(line)) != "abc" {
+		t.Fatalf("CRLF line = %q, %v", line, err)
+	}
+}
+
 func TestNDJSONExtractKey(t *testing.T) {
-	obj := map[string]any{"user": map[string]any{"id": "u1"}, "n": float64(12), "ok": true}
-	key, err := ExtractKey(obj, []string{"user.id", "n", "ok"}, ":")
+	obj := map[string]any{"user": map[string]any{"id": "u1"}, "ts": "001"}
+	key, err := ExtractKey(obj, []string{"user.id", "ts"}, ":")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if key != "u1:12:true" {
+	if key != "u1:001" {
 		t.Fatalf("key = %q", key)
 	}
 }
 
-func TestReadNDJSONRecordsPreservesLargeNumericKey(t *testing.T) {
+func TestReadNDJSONRecordsRequiresStringKey(t *testing.T) {
 	in := `{"id":9007199254740993,"name":"Ada"}` + newline
-	var got Record
-	if err := ReadNDJSONRecords(strings.NewReader(in), []string{"id"}, ":", func(rec Record) error {
-		got = rec
-		return nil
-	}); err != nil {
-		t.Fatal(err)
+	err := ReadNDJSONRecords(strings.NewReader(in), []string{"id"}, ":", func(Record) error { return nil })
+	if err == nil || !strings.Contains(err.Error(), "key fields must be strings") {
+		t.Fatalf("err = %v", err)
 	}
-	if string(got.Key) != "9007199254740993" {
-		t.Fatalf("key = %q", got.Key)
+}
+
+func TestExtractKeyRejectsAmbiguousCompoundKey(t *testing.T) {
+	obj := map[string]any{"left": "a:b", "right": "c"}
+	if _, err := ExtractKey(obj, []string{"left", "right"}, ":"); err == nil || !strings.Contains(err.Error(), "contains separator") {
+		t.Fatalf("err = %v", err)
+	}
+	if _, err := ExtractKey(obj, []string{"left", "right"}, "::"); err == nil || !strings.Contains(err.Error(), "separator must be one byte") {
+		t.Fatalf("err = %v", err)
 	}
 }
 
 func TestWriteNDJSONValueIncludesKey(t *testing.T) {
-	var b bytes.Buffer
-	if err := WriteNDJSONValue(&b, []byte("u1"), []byte(`{"name":"Ada"}`), true); err != nil {
+	out, err := FormatNDJSONValue([]byte("u1"), []byte(`{"name":"Ada"}`), true)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if got := b.String(); got != wrappedAda {
+	if got := string(out) + newline; got != wrappedAda {
 		t.Fatalf("got %q", got)
 	}
 }
@@ -126,5 +146,32 @@ func TestReadFrameApplyRecordsRejectsTruncatedBody(t *testing.T) {
 	err := ReadFrameApplyRecords(strings.NewReader("P 1 4\nx"), func(ApplyRecord) error { return nil })
 	if err == nil || !strings.Contains(err.Error(), "truncated body") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestApplyReadersRejectOversizedRecords(t *testing.T) {
+	kcat := "a\t" + strconv.FormatInt(MaxRecordBytes+1, 10) + "\t"
+	if err := ReadKcatApplyRecords(strings.NewReader(kcat), func(ApplyRecord) error { return nil }); !errors.Is(err, ErrRecordTooLarge) {
+		t.Fatalf("kcat err = %v", err)
+	}
+	frame := "P 1 " + strconv.Itoa(MaxRecordBytes) + "\n"
+	if err := ReadFrameApplyRecords(strings.NewReader(frame), func(ApplyRecord) error { return nil }); !errors.Is(err, ErrRecordTooLarge) {
+		t.Fatalf("frame err = %v", err)
+	}
+}
+
+func TestWriteFramePutRoundTrip(t *testing.T) {
+	key, value := []byte{'k', 0}, []byte("v\n\t")
+	var out bytes.Buffer
+	if err := WriteFramePut(&out, key, value); err != nil {
+		t.Fatal(err)
+	}
+	if err := ReadFrameApplyRecords(&out, func(rec ApplyRecord) error {
+		if rec.Delete || !bytes.Equal(rec.Key, key) || !bytes.Equal(rec.Value, value) {
+			t.Fatalf("record = %#v", rec)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -4,11 +4,16 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
 	"strings"
 )
+
+const MaxRecordBytes = 64 << 20
+
+var ErrRecordTooLarge = errors.New("record exceeds 64 MiB")
 
 type Record struct {
 	Key   []byte
@@ -36,26 +41,30 @@ func NewLineReader(r io.Reader) *LineReader {
 }
 
 func (r *LineReader) Next() ([]byte, int64, error) {
-	var out []byte
-	for {
-		part, err := r.r.ReadBytes('\n')
-		out = append(out, part...)
-		if err == nil {
-			break
-		}
-		if err == bufio.ErrBufferFull {
-			continue
-		}
-		if err == io.EOF {
-			if len(out) == 0 {
-				return nil, r.line, io.EOF
-			}
-			break
-		}
+	out, _, err := readUntil(r.r, '\n', MaxRecordBytes+1)
+	if err == io.EOF && len(out) == 0 {
+		return nil, r.line, io.EOF
+	}
+	if err != nil && err != io.EOF {
 		return nil, r.line, err
 	}
 	r.line++
-	return TrimLine(out), r.line, nil
+	out = TrimLine(out)
+	if len(out) > MaxRecordBytes {
+		return nil, r.line, ErrRecordTooLarge
+	}
+	return out, r.line, nil
+}
+
+func ReadRaw(r io.Reader) ([]byte, error) {
+	b, err := io.ReadAll(io.LimitReader(r, MaxRecordBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(b) > MaxRecordBytes {
+		return nil, ErrRecordTooLarge
+	}
+	return b, nil
 }
 
 func TrimLine(b []byte) []byte {
@@ -160,20 +169,26 @@ func ReadKcatApplyRecords(r io.Reader, fn func(ApplyRecord) error) error {
 	br := bufio.NewReaderSize(r, 64*1024)
 	var line, total int64
 	for {
-		key, n, err := readUntil(br, '\t')
+		key, n, err := readUntil(br, '\t', MaxRecordBytes)
 		total += n
 		if err == io.EOF && len(key) == 0 {
 			return nil
 		}
 		line++
+		if errors.Is(err, ErrRecordTooLarge) {
+			return fmt.Errorf("record %d: %w", line, err)
+		}
 		if err != nil {
 			return fmt.Errorf("record %d: missing key separator", line)
 		}
 		if len(key) == 0 {
 			return fmt.Errorf("record %d: empty key", line)
 		}
-		sizeText, n, err := readUntil(br, '\t')
+		sizeText, n, err := readUntil(br, '\t', MaxRecordBytes)
 		total += n
+		if errors.Is(err, ErrRecordTooLarge) {
+			return fmt.Errorf("record %d: %w", line, err)
+		}
 		if err != nil {
 			return fmt.Errorf("record %d: missing payload length separator", line)
 		}
@@ -181,8 +196,8 @@ func ReadKcatApplyRecords(r io.Reader, fn func(ApplyRecord) error) error {
 		if err != nil || size < -1 {
 			return fmt.Errorf("record %d: invalid payload length", line)
 		}
-		if size > int64(int(^uint(0)>>1)) {
-			return fmt.Errorf("record %d: invalid payload length", line)
+		if size > MaxRecordBytes || size >= 0 && size > int64(MaxRecordBytes-len(key)) {
+			return fmt.Errorf("record %d: %w", line, ErrRecordTooLarge)
 		}
 		rec := ApplyRecord{Delete: size == -1, Key: append([]byte(nil), key...), Line: line}
 		if size >= 0 {
@@ -216,23 +231,25 @@ func ReadFrameApplyRecords(r io.Reader, fn func(ApplyRecord) error) error {
 	br := bufio.NewReaderSize(r, 64*1024)
 	var line, total int64
 	for {
-		header, err := br.ReadString('\n')
-		if err == io.EOF && header == "" {
+		header, n, err := readUntil(br, '\n', MaxRecordBytes)
+		if err == io.EOF && len(header) == 0 {
 			return nil
 		}
 		line++
-		total += int64(len(header))
+		total += n
+		if errors.Is(err, ErrRecordTooLarge) {
+			return fmt.Errorf("record %d: %w", line, err)
+		}
 		if err != nil {
 			return fmt.Errorf("record %d: truncated header", line)
 		}
-		header = strings.TrimSuffix(header, "\n")
-		parts := strings.Split(header, " ")
+		parts := strings.Split(string(header), " ")
 		rec, body, err := parseFrameHeader(parts, line)
 		if err != nil {
 			return err
 		}
-		n, err := io.ReadFull(br, body)
-		total += int64(n)
+		bodyN, err := io.ReadFull(br, body)
+		total += int64(bodyN)
 		if err != nil {
 			return fmt.Errorf("record %d: truncated body", line)
 		}
@@ -256,8 +273,8 @@ func parseFrameHeader(parts []string, line int64) (ApplyRecord, []byte, error) {
 		if err != nil {
 			return ApplyRecord{}, nil, fmt.Errorf("record %d: %w", line, err)
 		}
-		if valueLen > int(^uint(0)>>1)-keyLen {
-			return ApplyRecord{}, nil, fmt.Errorf("record %d: invalid length", line)
+		if keyLen > MaxRecordBytes || valueLen > MaxRecordBytes-keyLen {
+			return ApplyRecord{}, nil, fmt.Errorf("record %d: %w", line, ErrRecordTooLarge)
 		}
 		body := make([]byte, keyLen+valueLen)
 		return ApplyRecord{Key: body[:keyLen], Value: body[keyLen:], Line: line}, body, nil
@@ -268,6 +285,9 @@ func parseFrameHeader(parts []string, line int64) (ApplyRecord, []byte, error) {
 		keyLen, err := parseFrameLength(parts[1])
 		if err != nil {
 			return ApplyRecord{}, nil, fmt.Errorf("record %d: %w", line, err)
+		}
+		if keyLen > MaxRecordBytes {
+			return ApplyRecord{}, nil, fmt.Errorf("record %d: %w", line, ErrRecordTooLarge)
 		}
 		key := make([]byte, keyLen)
 		return ApplyRecord{Delete: true, Key: key, Line: line}, key, nil
@@ -293,13 +313,20 @@ func parseFrameLength(s string) (int, error) {
 	return n, nil
 }
 
-func readUntil(r *bufio.Reader, delim byte) ([]byte, int64, error) {
+func readUntil(r *bufio.Reader, delim byte, maxBytes int) ([]byte, int64, error) {
 	var out []byte
 	var n int64
 	for {
-		part, err := r.ReadBytes(delim)
-		out = append(out, part...)
+		part, err := r.ReadSlice(delim)
 		n += int64(len(part))
+		contentLen := len(out) + len(part)
+		if err == nil {
+			contentLen--
+		}
+		if contentLen > maxBytes {
+			return nil, n, ErrRecordTooLarge
+		}
+		out = append(out, part...)
 		if err == nil {
 			return out[:len(out)-1], n, nil
 		}
@@ -314,6 +341,9 @@ func ExtractKey(obj map[string]any, fields []string, sep string) (string, error)
 	if len(fields) == 0 {
 		return "", fmt.Errorf("missing key field")
 	}
+	if len(fields) > 1 && len(sep) != 1 {
+		return "", fmt.Errorf("compound key separator must be one byte")
+	}
 	parts := make([]string, 0, len(fields))
 	for _, field := range fields {
 		v, ok := LookupField(obj, field)
@@ -323,6 +353,9 @@ func ExtractKey(obj map[string]any, fields []string, sep string) (string, error)
 		s, err := CanonicalKey(v)
 		if err != nil {
 			return "", fmt.Errorf("invalid key field %q: %w", field, err)
+		}
+		if len(fields) > 1 && strings.Contains(s, sep) {
+			return "", fmt.Errorf("key field %q contains separator %q", field, sep)
 		}
 		parts = append(parts, s)
 	}
@@ -345,20 +378,10 @@ func LookupField(obj map[string]any, path string) (any, bool) {
 }
 
 func CanonicalKey(v any) (string, error) {
-	switch x := v.(type) {
-	case string:
-		return x, nil
-	case float64:
-		return strconv.FormatFloat(x, 'f', -1, 64), nil
-	case json.Number:
-		return x.String(), nil
-	case bool:
-		return strconv.FormatBool(x), nil
-	case nil:
-		return "null", nil
-	default:
-		return "", fmt.Errorf("object and array keys are not supported")
+	if s, ok := v.(string); ok {
+		return s, nil
 	}
+	return "", fmt.Errorf("key fields must be strings")
 }
 
 func WriteKV(w io.Writer, key, value []byte) error {
@@ -376,12 +399,18 @@ func WriteLine(w io.Writer, value []byte) error {
 	return err
 }
 
-func WriteNDJSONValue(w io.Writer, key, value []byte, includeKey bool) error {
-	out, err := FormatNDJSONValue(key, value, includeKey)
-	if err != nil {
+func WriteFramePut(w io.Writer, key, value []byte) error {
+	if len(key) > MaxRecordBytes || len(value) > MaxRecordBytes-len(key) {
+		return ErrRecordTooLarge
+	}
+	if _, err := fmt.Fprintf(w, "P %d %d\n", len(key), len(value)); err != nil {
 		return err
 	}
-	return WriteLine(w, out)
+	if _, err := w.Write(key); err != nil {
+		return err
+	}
+	_, err := w.Write(value)
+	return err
 }
 
 func FormatNDJSONValue(key, value []byte, includeKey bool) ([]byte, error) {
