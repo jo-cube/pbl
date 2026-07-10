@@ -98,6 +98,11 @@ The CLI formats are edge formats:
 - `line`: one line per record, often useful for persistent sets.
 - `raw`: one stdin payload stored under `--key`.
 - `ndjson`: one JSON object per line, keyed by one or more fields.
+- `frame`: binary-safe key/value records for lossless export and restore.
+
+NDJSON key fields must be strings. Compound key parts may not contain
+the one-byte `--key-sep`, which defaults to `:`. Input records and values are
+limited to 64 MiB.
 
 Scans are ordered by raw key bytes. `range` is half-open:
 
@@ -126,13 +131,13 @@ pbl prefix <collection> <prefix>
 pbl range <collection> <start> <end>
 pbl keys <collection>
 pbl values <collection>
+pbl export <collection> [--format frame]
 ```
 
 Streaming workflows:
 
 ```text
 pbl import <collection> --format kv|line|ndjson|raw
-pbl export <collection>
 pbl get-many <collection>
 pbl del-many <collection>
 pbl exists <collection>

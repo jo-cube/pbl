@@ -29,6 +29,9 @@ Write commands that create records initialize the database if needed. Read,
 delete, metadata, and stream lookup commands require the database directory to
 exist.
 
+An empty uninitialized Pebble database may be initialized by a write command.
+A non-empty Pebble database without pbl format metadata is rejected.
+
 ## Exit Codes
 
 ```text
@@ -60,10 +63,17 @@ durability.
 key<TAB>value
 ```
 
-`ndjson` input is one JSON object per line. Repeated `--key-field` flags build a
-compound key joined with `--key-sep`, which defaults to `:`. String, number,
-boolean, and null key fields are accepted; object and array key fields are not.
-Import and stream lookup paths reject empty user keys.
+`ndjson` input is one JSON object per line. Key fields must be strings. Repeated
+`--key-field` flags build a compound key joined with the one-byte `--key-sep`,
+which defaults to `:`. Compound key parts may not contain that separator.
+Import and stream lookup paths reject empty user keys. Input records and values
+are limited to 64 MiB.
+
+`frame` output is a binary-safe sequence accepted by `apply --format frame`.
+Use it when an export must preserve arbitrary key and value bytes.
+
+Bulk commands commit incrementally. An input error can leave earlier batches
+committed.
 
 ## Command Map
 

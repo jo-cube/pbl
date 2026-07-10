@@ -85,6 +85,8 @@ The supported format version is `1`.
 Open behavior:
 
 - Missing metadata is initialized only by commands allowed to create the DB.
+- A non-empty Pebble database without pbl format metadata is rejected.
+- Missing or malformed required metadata is rejected.
 - Future or older unsupported versions fail with storage exit code `5`.
 - Physical key encoding must not change without a format bump and migration
   plan.

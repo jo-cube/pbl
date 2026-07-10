@@ -23,7 +23,8 @@ Flags:
   the key.
 - `--key`: required key for `raw` import.
 - `--key-field`: NDJSON field used as the key; repeat for compound keys.
-- `--key-sep`: separator between compound key parts.
+- `--key-sep`: one-byte separator between compound key parts; parts may not
+  contain it.
 - `--batch-size`: maximum records per write batch.
 - `--batch-bytes`: approximate bytes per write batch, accepting plain numbers,
   `K`, `KB`, `M`, or `MB`.
@@ -34,7 +35,9 @@ Flags:
 - `--no-sync`: explicitly keep the bulk-write default of not syncing each batch.
 
 Behind the scenes: import initializes the database if needed, ensures collection
-metadata exists, batches writes, and rejects empty user keys.
+metadata exists, batches writes, and rejects empty user keys. NDJSON key fields
+must be strings. If input fails after a batch commit, earlier batches remain
+stored.
 
 ## apply
 
@@ -58,4 +61,5 @@ Flags:
 - `--no-sync`: explicitly keep the bulk-write default of not syncing each batch.
 
 Behind the scenes: `apply` materializes the latest state from an ordered stream.
-It batches writes and deletes, then commits each batch to Pebble.
+It batches writes and deletes, then commits each batch to Pebble. If input fails
+after a batch commit, earlier batches remain stored.

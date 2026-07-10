@@ -7,7 +7,7 @@ pbl init [--if-not-exists]
 ```
 
 Creates the Pebble directory if needed and writes pbl storage metadata. Success
-writes no stdout.
+writes no stdout. Running `init` on an initialized database is an error.
 
 Flags:
 
