@@ -2,9 +2,8 @@ package app
 
 import (
 	"errors"
-	"io"
-	"strings"
 
+	"github.com/jo-cube/pbl/internal/codec"
 	"github.com/jo-cube/pbl/internal/store"
 	"github.com/spf13/cobra"
 )
@@ -26,8 +25,8 @@ already-initialized compatible database.`,
 			}
 			defer s.Close()
 			err = s.Init()
-			if err != nil && ifNotExists && strings.Contains(err.Error(), "unsupported") {
-				return storageErr(err)
+			if errors.Is(err, store.ErrAlreadyInitialized) && ifNotExists {
+				return nil
 			}
 			return storageWrap(err)
 		},
@@ -49,9 +48,9 @@ stdin bytes as the value, including newlines. Single-key writes sync by default;
 use --no-sync only when throughput matters more than crash durability.`,
 		Args: func(cmd *cobra.Command, args []string) error {
 			if stdinValue {
-				return wantArgs(args, 2)
+				return collectionArgs(2)(cmd, args)
 			}
-			return wantArgs(args, 3)
+			return collectionArgs(3)(cmd, args)
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := validateSync(sync); err != nil {
@@ -59,8 +58,11 @@ use --no-sync only when throughput matters more than crash durability.`,
 			}
 			var value []byte
 			if stdinValue {
-				b, err := io.ReadAll(c.stdin)
+				b, err := codec.ReadRaw(c.stdin)
 				if err != nil {
+					if errors.Is(err, codec.ErrRecordTooLarge) {
+						return badInputErr(err)
+					}
 					return runtimeErr(err)
 				}
 				value = b
@@ -91,7 +93,7 @@ func (c *cli) getCommand() *cobra.Command {
 Default output is the raw value plus a newline. Use --format when downstream
 tools need key/value or NDJSON output. Missing keys exit 2 by default; --missing
 can skip them or emit a null-shaped record instead.`,
-		Args: exactArgs(2),
+		Args: collectionArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := validateOneOf("format", format, "raw", "kv", "ndjson"); err != nil {
 				return err
@@ -132,7 +134,7 @@ func (c *cli) delCommand() *cobra.Command {
 
 Missing keys are success by default so delete is idempotent in scripts. Add
 --fail-missing when absence should exit 2. Single-key deletes sync by default.`,
-		Args: exactArgs(2),
+		Args: collectionArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := validateSync(sync); err != nil {
 				return err

@@ -1,8 +1,8 @@
 package app
 
 import (
+	"errors"
 	"fmt"
-	"io"
 	"time"
 
 	"github.com/jo-cube/pbl/internal/codec"
@@ -25,7 +25,7 @@ Formats decide how input becomes keys and values: kv splits on the first tab,
 line stores each line, ndjson reads fields from JSON objects, and raw stores all
 stdin bytes under --key. Import writes are batched and not synced unless --sync
 is set.`,
-		Args: exactArgs(1),
+		Args: collectionArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format == "" {
 				return usagef("usage: pbl import <collection> --format <format>")
@@ -41,6 +41,12 @@ is set.`,
 			}
 			if err := validateBatchSize(batchSize); err != nil {
 				return err
+			}
+			if err := validateNDJSONKeyFields(format, fields, keySep); err != nil {
+				return err
+			}
+			if format == "raw" && key == "" {
+				return usagef("raw import requires --key")
 			}
 			if replace && (ignoreDup || failDup) {
 				return usagef("--replace cannot be combined with duplicate handling flags")
@@ -62,38 +68,14 @@ is set.`,
 				return storageErr(err)
 			}
 			writeOpts := store.WriteOptions{Sync: writeSync(sync, false)}
-			seen := map[string]struct{}{}
-			shouldAdd := func(rec codec.Record) (bool, error) {
-				if len(rec.Key) == 0 {
-					return false, badInputf("line %d: empty key", rec.Line)
-				}
-				if ignoreDup || failDup {
-					k := string(rec.Key)
-					if _, ok := seen[k]; ok {
-						if ignoreDup {
-							return false, nil
-						}
-						return false, badInputf("line %d: duplicate key", rec.Line)
-					}
-					found, err := s.Has(collection, rec.Key)
-					if err != nil {
-						return false, storageErr(err)
-					}
-					if found && ignoreDup {
-						return false, nil
-					}
-					if found && failDup {
-						return false, badInputf("line %d: duplicate key", rec.Line)
-					}
-					seen[k] = struct{}{}
-				}
-				return true, nil
+			duplicatePolicy := "replace"
+			if ignoreDup {
+				duplicatePolicy = "ignore"
+			} else if failDup {
+				duplicatePolicy = "fail"
 			}
 			switch format {
 			case "raw":
-				if key == "" {
-					return usagef("raw import requires --key")
-				}
 				if ignoreDup || failDup {
 					found, err := s.Has(collection, []byte(key))
 					if err != nil {
@@ -106,13 +88,16 @@ is set.`,
 						return badInputf("duplicate key")
 					}
 				}
-				value, err := io.ReadAll(c.stdin)
+				rawValue, err := codec.ReadRaw(c.stdin)
 				if err != nil {
+					if errors.Is(err, codec.ErrRecordTooLarge) {
+						return badInputErr(err)
+					}
 					return runtimeErr(err)
 				}
-				return storageWrap(s.Put(collection, []byte(key), value, writeOpts))
+				return storageWrap(s.Put(collection, []byte(key), rawValue, writeOpts))
 			case "kv", "line", "ndjson":
-				return c.importRecords(s, collection, format, keyMode, fields, keySep, batchSize, batchBytes, writeOpts, shouldAdd)
+				return c.importRecords(s, collection, format, keyMode, fields, keySep, duplicatePolicy, batchSize, batchBytes, writeOpts)
 			default:
 				return usagef("unknown format %q", format)
 			}
@@ -121,8 +106,8 @@ is set.`,
 	cmd.Flags().StringVar(&format, "format", "", "kv|line|ndjson|raw input")
 	cmd.Flags().StringVar(&keyMode, "key-mode", "value", "value|line-number key mode for line input")
 	cmd.Flags().StringVar(&key, "key", "", "key for raw input")
-	cmd.Flags().StringVar(&keySep, "key-sep", ":", "compound key separator")
-	cmd.Flags().StringArrayVar(&fields, "key-field", nil, "ndjson key field; repeat for compound keys")
+	cmd.Flags().StringVar(&keySep, "key-sep", ":", "one-byte compound key separator")
+	cmd.Flags().StringArrayVar(&fields, "key-field", nil, "ndjson string key field; repeat for compound keys")
 	cmd.Flags().IntVar(&batchSize, "batch-size", 1000, "max records per batch")
 	cmd.Flags().StringVar(&batchBytesText, "batch-bytes", "4MB", "approx bytes per batch")
 	cmd.Flags().BoolVar(&replace, "replace", false, "replace existing values")
@@ -132,8 +117,9 @@ is set.`,
 	return cmd
 }
 
-func (c *cli) importRecords(s *store.Store, collection, format, keyMode string, fields []string, keySep string, batchSize, batchBytes int, writeOpts store.WriteOptions, before func(codec.Record) (bool, error)) error {
+func (c *cli) importRecords(s *store.Store, collection, format, keyMode string, fields []string, keySep, duplicatePolicy string, batchSize, batchBytes int, writeOpts store.WriteOptions) error {
 	b := s.NewBatch()
+	seen := map[string]struct{}{}
 	defer func() { _ = b.Close() }()
 	flush := func() error {
 		if b.Count() == 0 {
@@ -144,15 +130,32 @@ func (c *cli) importRecords(s *store.Store, collection, format, keyMode string, 
 		}
 		_ = b.Close()
 		b = s.NewBatch()
+		clear(seen)
 		return nil
 	}
 	add := func(rec codec.Record) error {
-		ok, err := before(rec)
-		if err != nil {
-			return err
+		if len(rec.Key) == 0 {
+			return badInputf("line %d: empty key", rec.Line)
 		}
-		if !ok {
-			return nil
+		if duplicatePolicy != "replace" {
+			k := string(rec.Key)
+			if _, ok := seen[k]; ok {
+				if duplicatePolicy == "ignore" {
+					return nil
+				}
+				return badInputf("line %d: duplicate key", rec.Line)
+			}
+			found, err := s.Has(collection, rec.Key)
+			if err != nil {
+				return storageErr(err)
+			}
+			if found {
+				if duplicatePolicy == "ignore" {
+					return nil
+				}
+				return badInputf("line %d: duplicate key", rec.Line)
+			}
+			seen[k] = struct{}{}
 		}
 		if err := b.Put(collection, rec.Key, rec.Value); err != nil {
 			return storageErr(err)
@@ -191,7 +194,7 @@ The kcat format materializes compacted Kafka topics. The frame format is
 binary-safe for custom producers. Writes are batched and not synced unless
 --sync is set. Success writes no stdout; --stats writes ingest metrics to
 stderr.`,
-		Args: exactArgs(1),
+		Args: collectionArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format == "" {
 				return usagef("usage: pbl apply <collection> --format <format>")

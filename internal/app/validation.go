@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/jo-cube/pbl/internal/store"
 	"github.com/spf13/cobra"
 )
 
@@ -14,7 +15,7 @@ func addSyncFlags(cmd *cobra.Command, opts *syncOptions) {
 }
 
 func addScanFlags(cmd *cobra.Command, opts *scanOptions) {
-	cmd.Flags().StringVar(&opts.format, "format", "kv", "kv|ndjson|raw output")
+	cmd.Flags().StringVar(&opts.format, "format", "kv", "kv|ndjson|raw|frame output")
 	cmd.Flags().Int64Var(&opts.limit, "limit", 0, "max records; 0 means all")
 	cmd.Flags().BoolVar(&opts.keysOnly, "keys-only", false, "emit keys only")
 	cmd.Flags().BoolVar(&opts.valuesOnly, "values-only", false, "emit values only")
@@ -50,7 +51,7 @@ windows where the end bound should not be included.`
 		return `Export records from a collection using the same ordered scan path.
 
 Default output is key<TAB>value. Use --values-only --format raw for byte-oriented
-value export.`
+value export, or --format frame for a binary-safe key/value export.`
 	default:
 		return `Emit all records in a collection ordered by raw key bytes.
 
@@ -108,6 +109,18 @@ func exactArgs(n int) cobra.PositionalArgs {
 	}
 }
 
+func collectionArgs(n int) cobra.PositionalArgs {
+	return func(cmd *cobra.Command, args []string) error {
+		if err := wantArgs(args, n); err != nil {
+			return err
+		}
+		if err := store.ValidateCollection(args[0]); err != nil {
+			return usageErr(err)
+		}
+		return nil
+	}
+}
+
 func wantArgs(args []string, n int) error {
 	if len(args) != n {
 		return usagef("expected %d argument(s), got %d", n, len(args))
@@ -146,7 +159,7 @@ func validateLimit(n int64) error {
 }
 
 func validateScanOptions(opts scanOptions) error {
-	if err := validateOneOf("format", opts.format, "kv", "ndjson", "raw"); err != nil {
+	if err := validateOneOf("format", opts.format, "kv", "ndjson", "raw", "frame"); err != nil {
 		return err
 	}
 	if err := validateLimit(opts.limit); err != nil {
@@ -157,6 +170,22 @@ func validateScanOptions(opts scanOptions) error {
 	}
 	if opts.format == "raw" && !opts.valuesOnly {
 		return usagef("raw export requires --values-only")
+	}
+	if opts.format == "frame" && (opts.keysOnly || opts.valuesOnly || opts.includeKey) {
+		return usagef("frame export cannot be combined with output-shaping flags")
+	}
+	return nil
+}
+
+func validateNDJSONKeyFields(format string, fields []string, sep string) error {
+	if format != "ndjson" {
+		return nil
+	}
+	if len(fields) == 0 {
+		return usagef("ndjson input requires --key-field")
+	}
+	if len(fields) > 1 && len(sep) != 1 {
+		return usagef("compound ndjson keys require a one-byte --key-sep")
 	}
 	return nil
 }
@@ -173,10 +202,10 @@ func writeSync(opts syncOptions, def bool) bool {
 
 func parseSize(s string) (int, error) {
 	s = strings.TrimSpace(strings.ToUpper(s))
-	mult := 1
+	mult := uint64(1)
 	for _, suffix := range []struct {
 		s string
-		m int
+		m uint64
 	}{{"KB", 1024}, {"K", 1024}, {"MB", 1024 * 1024}, {"M", 1024 * 1024}} {
 		if strings.HasSuffix(s, suffix.s) {
 			mult = suffix.m
@@ -184,9 +213,10 @@ func parseSize(s string) (int, error) {
 			break
 		}
 	}
-	n, err := strconv.Atoi(s)
-	if err != nil || n <= 0 {
+	n, err := strconv.ParseUint(s, 10, 64)
+	maxInt := uint64(^uint(0) >> 1)
+	if err != nil || n == 0 || n > maxInt/mult {
 		return 0, fmt.Errorf("invalid size")
 	}
-	return n * mult, nil
+	return int(n * mult), nil
 }
