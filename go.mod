@@ -1,6 +1,6 @@
 module github.com/jo-cube/pbl
 
-go 1.26.4
+go 1.26.5
 
 require (
 	github.com/cockroachdb/pebble/v2 v2.1.6

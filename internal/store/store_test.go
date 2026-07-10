@@ -2,9 +2,14 @@ package store
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/cockroachdb/pebble/v2"
+	"github.com/jo-cube/pbl/internal/keyenc"
 )
 
 func TestStorePutGetDeleteScan(t *testing.T) {
@@ -40,6 +45,119 @@ func TestStorePutGetDeleteScan(t *testing.T) {
 	if _, err := s.Get("users", []byte("a")); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing get err = %v", err)
 	}
+}
+
+func TestInitAndRequireInitialized(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := s.RequireInitialized(); !errors.Is(err, ErrUninitialized) {
+		t.Fatalf("RequireInitialized before init = %v", err)
+	}
+	if err := s.Init(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Init(); !errors.Is(err, ErrAlreadyInitialized) {
+		t.Fatalf("second Init = %v", err)
+	}
+	if err := s.RequireInitialized(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestOpenRejectsNonEmptyUnmarkedPebbleDatabase(t *testing.T) {
+	path := t.TempDir()
+	db, err := pebble.Open(path, &pebble.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Set([]byte("other-app"), []byte("value"), pebble.Sync); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Open(path); !errors.Is(err, ErrUnmarkedDatabase) {
+		t.Fatalf("Open unmarked database = %v", err)
+	}
+}
+
+func TestOpenExistingDoesNotCreateDatabase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "empty")
+	if err := os.Mkdir(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := OpenExisting(path); !errors.Is(err, pebble.ErrDBDoesNotExist) {
+		t.Fatalf("OpenExisting empty directory = %v", err)
+	}
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("OpenExisting created %d files", len(entries))
+	}
+}
+
+func TestOpenRejectsIncompleteMetadata(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		createdAt string
+		want      string
+	}{
+		{"missing created-at", "", "missing required metadata"},
+		{"invalid created-at", "not-a-time", "invalid created-at metadata"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := t.TempDir()
+			db, err := pebble.Open(path, &pebble.Options{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := db.Set(keyenc.MetadataKey("format-version"), []byte("1"), pebble.Sync); err != nil {
+				t.Fatal(err)
+			}
+			if tc.createdAt != "" {
+				if err := db.Set(keyenc.MetadataKey("created-at"), []byte(tc.createdAt), pebble.Sync); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := db.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Open(path); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Open incomplete metadata = %v", err)
+			}
+		})
+	}
+}
+
+func TestOpenRejectsUnsupportedFormatVersion(t *testing.T) {
+	path := t.TempDir()
+	db, err := pebble.Open(path, &pebble.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Set(keyenc.MetadataKey("format-version"), []byte("2"), pebble.Sync); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Open(path); err == nil || !strings.Contains(err.Error(), "unsupported storage format") {
+		t.Fatalf("Open unsupported database = %v", err)
+	}
+}
+
+func TestDiscardLoggerFatalPanics(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("Fatalf did not panic")
+		}
+	}()
+	discardLogger{}.Fatalf("fatal %s", "invariant")
 }
 
 func TestCollectionsFromMetadata(t *testing.T) {

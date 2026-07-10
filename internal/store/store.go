@@ -1,11 +1,10 @@
 package store
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -18,7 +17,12 @@ import (
 
 const FormatVersion = 1
 
-var ErrNotFound = errors.New("not found")
+var (
+	ErrNotFound           = errors.New("not found")
+	ErrAlreadyInitialized = errors.New("database is already initialized")
+	ErrUninitialized      = errors.New("database is not initialized")
+	ErrUnmarkedDatabase   = errors.New("non-empty Pebble database is not a pbl database")
+)
 
 type WriteOptions struct {
 	Sync bool
@@ -52,14 +56,43 @@ type Store struct {
 }
 
 func Open(path string) (*Store, error) {
-	db, err := pebble.Open(path, &pebble.Options{Logger: discardLogger{}})
+	return open(path, false)
+}
+
+func OpenExisting(path string) (*Store, error) {
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return nil, err
+	}
+	for _, entry := range entries {
+		if entry.Name() == "CURRENT" || strings.HasPrefix(entry.Name(), "MANIFEST-") {
+			return open(path, true)
+		}
+	}
+	return nil, fmt.Errorf("%w: %s", pebble.ErrDBDoesNotExist, path)
+}
+
+func open(path string, mustExist bool) (*Store, error) {
+	db, err := pebble.Open(path, &pebble.Options{Logger: discardLogger{}, ErrorIfNotExists: mustExist})
 	if err != nil {
 		return nil, err
 	}
 	s := &Store{path: path, db: db}
-	if err := s.checkVersionIfPresent(); err != nil {
+	present, err := s.checkMetadata()
+	if err != nil {
 		_ = db.Close()
 		return nil, err
+	}
+	if !present {
+		empty, err := s.empty()
+		if err != nil {
+			_ = db.Close()
+			return nil, err
+		}
+		if !empty {
+			_ = db.Close()
+			return nil, ErrUnmarkedDatabase
+		}
 	}
 	return s, nil
 }
@@ -68,19 +101,21 @@ type discardLogger struct{}
 
 func (discardLogger) Infof(string, ...interface{})  {}
 func (discardLogger) Errorf(string, ...interface{}) {}
-func (discardLogger) Fatalf(string, ...interface{}) {}
+func (discardLogger) Fatalf(format string, args ...interface{}) {
+	panic(fmt.Sprintf(format, args...))
+}
 
 func (s *Store) Close() error {
 	return s.db.Close()
 }
 
-func (s *Store) Init() error {
+func (s *Store) Init() (err error) {
 	version, closer, err := s.db.Get(keyenc.MetadataKey("format-version"))
 	if errors.Is(err, pebble.ErrNotFound) {
 		now := time.Now().UTC().Format(time.RFC3339Nano)
 		b := s.db.NewBatch()
 		defer b.Close()
-		if err := b.Set(keyenc.MetadataKey("format-version"), []byte("1"), nil); err != nil {
+		if err := b.Set(keyenc.MetadataKey("format-version"), []byte(strconv.Itoa(FormatVersion)), nil); err != nil {
 			return err
 		}
 		if err := b.Set(keyenc.MetadataKey("created-at"), []byte(now), nil); err != nil {
@@ -91,18 +126,18 @@ func (s *Store) Init() error {
 	if err != nil {
 		return err
 	}
-	defer closer.Close()
-	if string(version) != "1" {
+	defer func() { err = errors.Join(err, closer.Close()) }()
+	if string(version) != strconv.Itoa(FormatVersion) {
 		return fmt.Errorf("unsupported storage format version %q", version)
 	}
-	return nil
+	return ErrAlreadyInitialized
 }
 
 func (s *Store) EnsureCollection(collection string) error {
 	if err := ValidateCollection(collection); err != nil {
 		return err
 	}
-	if err := s.Init(); err != nil {
+	if err := s.Init(); err != nil && !errors.Is(err, ErrAlreadyInitialized) {
 		return err
 	}
 	key := keyenc.CollectionMetaKey(collection)
@@ -124,28 +159,26 @@ func (s *Store) EnsureCollection(collection string) error {
 	return s.db.Set(key, value, pebble.Sync)
 }
 
-func (s *Store) ListCollections() ([]string, error) {
+func (s *Store) ListCollections() (out []string, err error) {
 	prefix := keyenc.CollectionMetaPrefix()
 	upper, _ := keyenc.NextPrefix(prefix)
 	iter, err := s.db.NewIter(&pebble.IterOptions{LowerBound: prefix, UpperBound: upper})
 	if err != nil {
 		return nil, err
 	}
-	defer iter.Close()
-	var out []string
+	defer func() { err = errors.Join(err, iter.Close()) }()
 	for valid := iter.First(); valid; valid = iter.Next() {
 		name := strings.TrimPrefix(string(iter.Key()[1:]), "collection/")
 		out = append(out, name)
 	}
-	if err := iter.Error(); err != nil {
+	if err = iter.Error(); err != nil {
 		return nil, err
 	}
-	sort.Strings(out)
 	return out, nil
 }
 
 func (s *Store) Info() (Info, error) {
-	if err := s.checkVersionIfPresent(); err != nil {
+	if err := s.RequireInitialized(); err != nil {
 		return Info{}, err
 	}
 	collections, err := s.ListCollections()
@@ -170,9 +203,6 @@ func (s *Store) Info() (Info, error) {
 	if err != nil && !errors.Is(err, pebble.ErrNotFound) {
 		return Info{}, err
 	}
-	if version == 0 && created != "" {
-		version = FormatVersion
-	}
 	return Info{s.path, version, len(collections), created}, nil
 }
 
@@ -188,7 +218,7 @@ func (s *Store) Put(collection string, key, value []byte, opts WriteOptions) err
 	return s.db.Set(keyenc.DataKey(collection, key), value, pebbleWriteOptions(opts))
 }
 
-func (s *Store) Get(collection string, key []byte) ([]byte, error) {
+func (s *Store) Get(collection string, key []byte) (out []byte, err error) {
 	if err := ValidateCollection(collection); err != nil {
 		return nil, err
 	}
@@ -199,7 +229,7 @@ func (s *Store) Get(collection string, key []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer closer.Close()
+	defer func() { err = errors.Join(err, closer.Close()) }()
 	return append([]byte(nil), value...), nil
 }
 
@@ -248,12 +278,12 @@ func (s *Store) Range(collection string, start, end []byte, opts ScanOptions, fn
 	return s.scan(lower, upper, opts, fn)
 }
 
-func (s *Store) scan(lower, upper []byte, opts ScanOptions, fn func(Record) error) error {
+func (s *Store) scan(lower, upper []byte, opts ScanOptions, fn func(Record) error) (err error) {
 	iter, err := s.db.NewIter(&pebble.IterOptions{LowerBound: lower, UpperBound: upper})
 	if err != nil {
 		return err
 	}
-	defer iter.Close()
+	defer func() { err = errors.Join(err, iter.Close()) }()
 	var n int64
 	for valid := iter.First(); valid; valid = iter.Next() {
 		if opts.Limit > 0 && n >= opts.Limit {
@@ -273,22 +303,63 @@ func (s *Store) scan(lower, upper []byte, opts ScanOptions, fn func(Record) erro
 }
 
 func (s *Store) NewBatch() *Batch {
-	return &Batch{store: s, batch: s.db.NewBatch()}
+	return &Batch{batch: s.db.NewBatch()}
 }
 
-func (s *Store) checkVersionIfPresent() error {
-	value, closer, err := s.db.Get(keyenc.MetadataKey("format-version"))
-	if errors.Is(err, pebble.ErrNotFound) {
-		return nil
-	}
+func (s *Store) RequireInitialized() error {
+	present, err := s.checkMetadata()
 	if err != nil {
 		return err
 	}
-	defer closer.Close()
-	if !bytes.Equal(value, []byte("1")) {
-		return fmt.Errorf("unsupported storage format version %q", value)
+	if !present {
+		return ErrUninitialized
 	}
 	return nil
+}
+
+func (s *Store) checkMetadata() (bool, error) {
+	value, closer, err := s.db.Get(keyenc.MetadataKey("format-version"))
+	if errors.Is(err, pebble.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	version := string(value)
+	if err := closer.Close(); err != nil {
+		return false, err
+	}
+	if version != strconv.Itoa(FormatVersion) {
+		return false, fmt.Errorf("unsupported storage format version %q", version)
+	}
+	created, closer, err := s.db.Get(keyenc.MetadataKey("created-at"))
+	if errors.Is(err, pebble.ErrNotFound) {
+		return false, fmt.Errorf("missing required metadata %q", "created-at")
+	}
+	if err != nil {
+		return false, err
+	}
+	createdAt := string(created)
+	if err := closer.Close(); err != nil {
+		return false, err
+	}
+	if _, err := time.Parse(time.RFC3339Nano, createdAt); err != nil {
+		return false, fmt.Errorf("invalid created-at metadata: %w", err)
+	}
+	return true, nil
+}
+
+func (s *Store) empty() (empty bool, err error) {
+	iter, err := s.db.NewIter(nil)
+	if err != nil {
+		return false, err
+	}
+	defer func() { err = errors.Join(err, iter.Close()) }()
+	empty = !iter.First()
+	if err = iter.Error(); err != nil {
+		return false, err
+	}
+	return empty, nil
 }
 
 func ValidateCollection(name string) error {

@@ -95,11 +95,16 @@ Missing joins attach `null` by default. Use `--missing skip` for inner-join
 behavior or `--missing error` to fail if a lookup is missing.
 
 Stored values must be valid JSON when they are attached to NDJSON input.
+Fields used as keys must be strings.
 
 ## Compound Ordered Keys
 
 Repeated `--key-field` flags build one key with `--key-sep` between parts. The
 default separator is `:`.
+
+The separator must be one byte, and key parts may not contain it. This keeps the
+compound key mapping unambiguous; choose a different `--key-sep` when the data
+contains `:`.
 
 ```sh
 cat events.ndjson \
@@ -138,6 +143,17 @@ pbl get artifacts build.tar --no-newline > build.tar
 
 `raw` import and `put --stdin` read one complete value from stdin.
 
+Input records and raw values are limited to 64 MiB.
+
+## Lossless Export
+
+Use frame format to preserve arbitrary key and value bytes:
+
+```sh
+pbl export artifacts --format frame > artifacts.frame
+pbl apply artifacts-restored --format frame < artifacts.frame
+```
+
 ## Compacted Streams
 
 Apply a compacted Kafka topic through `kcat`:
@@ -155,6 +171,9 @@ For binary-safe producers, emit frame records instead:
 P <key-bytes> <value-bytes>\n<key><value>
 D <key-bytes>\n<key>
 ```
+
+`import` and `apply` commit incrementally. If later input is invalid, records in
+earlier committed batches remain stored.
 
 ## Useful Commands
 

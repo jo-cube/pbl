@@ -24,6 +24,8 @@ contract, global flags, formats, and exit codes, see [../cli.md](../cli.md).
 - Single-key writes sync by default. Bulk commands (`import`, `apply`, and
   `del-many`) do not sync each batch unless `--sync` is set.
 - `--limit 0` means no limit.
+- Input records and values are limited to 64 MiB.
+- Bulk commands commit incrementally; an error can leave earlier batches stored.
 
 ## Formats
 
@@ -38,5 +40,9 @@ contract, global flags, formats, and exit codes, see [../cli.md](../cli.md).
 key<TAB>value
 ```
 
-`ndjson` is one JSON object per line. Repeated `--key-field` flags build a
-compound key joined with `--key-sep`, which defaults to `:`.
+`ndjson` is one JSON object per line. Key fields must be strings. Repeated
+`--key-field` flags build a compound key joined with the one-byte `--key-sep`,
+which defaults to `:`; key parts may not contain the separator.
+
+`frame` is the binary-safe put/delete format accepted by `apply`. Frame export
+emits puts and can be piped back into `apply` without losing key or value bytes.

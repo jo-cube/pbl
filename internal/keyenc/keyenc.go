@@ -1,9 +1,6 @@
 package keyenc
 
-import (
-	"bytes"
-	"encoding/binary"
-)
+import "encoding/binary"
 
 const (
 	MetaPrefix byte = 0x00
@@ -93,8 +90,4 @@ func NextPrefix(b []byte) ([]byte, bool) {
 		}
 	}
 	return nil, false
-}
-
-func HasPrefix(key, prefix []byte) bool {
-	return bytes.HasPrefix(key, prefix)
 }

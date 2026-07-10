@@ -89,6 +89,8 @@ The tests in `tests/cli` double as executable examples. They cover:
 - NDJSON import and `join`.
 - Compound key prefix scans.
 - `get-many` and `del-many`.
+- Binary-safe frame export and restore.
+- Initialization, ownership, and partial bulk-write behavior.
 
 Keep these tests readable; they are a reference for future docs.
 

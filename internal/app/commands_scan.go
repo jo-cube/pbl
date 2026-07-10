@@ -24,7 +24,7 @@ func (c *cli) scanCommand(mode string) *cobra.Command {
 		Use:   use,
 		Short: scanShort(mode),
 		Long:  scanLong(mode),
-		Args:  exactArgs(want),
+		Args:  collectionArgs(want),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := validateScanOptions(opts); err != nil {
 				return err

@@ -129,5 +129,13 @@ func (c *cli) openExisting() (*store.Store, error) {
 		}
 		return nil, storageErr(err)
 	}
-	return c.open()
+	s, err := store.OpenExisting(c.dbPath)
+	if err != nil {
+		return nil, storageErr(err)
+	}
+	if err := s.RequireInitialized(); err != nil {
+		_ = s.Close()
+		return nil, storageErr(err)
+	}
+	return s, nil
 }

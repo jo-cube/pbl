@@ -6,7 +6,6 @@ import (
 )
 
 type Batch struct {
-	store *Store
 	batch *pebble.Batch
 	count int
 	bytes int

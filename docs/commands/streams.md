@@ -14,6 +14,9 @@ pbl get-many <collection>
 Reads lookup keys from stdin and emits matching values in the same order. Missing
 keys are skipped by default.
 
+NDJSON key fields must be strings. `get-many` joins repeated key fields with
+`:`, and compound key parts may not contain `:`.
+
 Behind the scenes: each input record is looked up independently. If a later
 lookup fails after stdout has already been written, pbl exits with partial
 failure code 6.

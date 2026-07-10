@@ -2,15 +2,12 @@ package app
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 
 	"github.com/jo-cube/pbl/internal/codec"
 )
-
-func (c *cli) forInputKeys(inputFormat string, fields []string, sep string, fn func(codec.Record) error) error {
-	return c.forInputRecords(inputFormat, fields, sep, fn)
-}
 
 func (c *cli) forInputRecords(inputFormat string, fields []string, sep string, fn func(codec.Record) error) error {
 	check := func(rec codec.Record) error {
@@ -28,6 +25,9 @@ func (c *cli) forInputRecords(inputFormat string, fields []string, sep string, f
 				return nil
 			}
 			if err != nil {
+				if errors.Is(err, codec.ErrRecordTooLarge) {
+					return badInputErr(err)
+				}
 				return runtimeErr(err)
 			}
 			if err := check(codec.Record{Key: append([]byte(nil), line...), Raw: append([]byte(nil), line...), Line: n}); err != nil {
@@ -92,6 +92,8 @@ func (c *cli) writeScanRecord(key, value []byte, format string, keysOnly, values
 		return runtimeWrap(codec.WriteLine(c.stdout, out))
 	case "raw":
 		return usagef("raw export requires --values-only")
+	case "frame":
+		return runtimeWrap(codec.WriteFramePut(c.stdout, key, value))
 	default:
 		return usagef("unknown format %q", format)
 	}

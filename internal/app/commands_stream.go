@@ -15,7 +15,7 @@ func (c *cli) keysValuesCommand(mode string) *cobra.Command {
 		Use:   mode + " <collection>",
 		Short: keysValuesShort(mode),
 		Long:  keysValuesLong(mode),
-		Args:  exactArgs(1),
+		Args:  collectionArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := validateLimit(limit); err != nil {
 				return err
@@ -65,7 +65,7 @@ func (c *cli) getManyCommand() *cobra.Command {
 
 Line input treats each line as a key. NDJSON input reads one or more --key-field
 values from each object. Missing keys are skipped by default.`,
-		Args: exactArgs(1),
+		Args: collectionArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := validateOneOf("input-format", inputFormat, "line", "ndjson"); err != nil {
 				return err
@@ -76,12 +76,15 @@ values from each object. Missing keys are skipped by default.`,
 			if err := validateOneOf("missing", missing, "skip", "null", "error"); err != nil {
 				return err
 			}
+			if err := validateNDJSONKeyFields(inputFormat, fields, ":"); err != nil {
+				return err
+			}
 			s, err := c.openExisting()
 			if err != nil {
 				return err
 			}
 			defer s.Close()
-			return c.forInputKeys(inputFormat, fields, ":", func(rec codec.Record) error {
+			return c.forInputRecords(inputFormat, fields, ":", func(rec codec.Record) error {
 				value, err := s.Get(args[0], rec.Key)
 				if errors.Is(err, store.ErrNotFound) {
 					return c.handleMissing(missing, rec.Key, format, withKey)
@@ -97,7 +100,7 @@ values from each object. Missing keys are skipped by default.`,
 	cmd.Flags().StringVar(&format, "format", "raw", "raw|kv|ndjson output")
 	cmd.Flags().StringVar(&missing, "missing", "skip", "skip|null|error for missing keys")
 	cmd.Flags().BoolVar(&withKey, "with-key", false, "include key in output")
-	cmd.Flags().StringArrayVar(&fields, "key-field", nil, "ndjson key field; repeat for compound keys")
+	cmd.Flags().StringArrayVar(&fields, "key-field", nil, "ndjson string key field; repeat for compound keys")
 	return cmd
 }
 
@@ -113,7 +116,7 @@ func (c *cli) delManyCommand() *cobra.Command {
 
 Line input treats each line as a key. NDJSON input reads one or more --key-field
 values from each object. Success writes no stdout.`,
-		Args: exactArgs(1),
+		Args: collectionArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := validateOneOf("input-format", inputFormat, "line", "ndjson"); err != nil {
 				return err
@@ -122,6 +125,9 @@ values from each object. Success writes no stdout.`,
 				return err
 			}
 			if err := validateBatchSize(batchSize); err != nil {
+				return err
+			}
+			if err := validateNDJSONKeyFields(inputFormat, fields, ":"); err != nil {
 				return err
 			}
 			batchBytes, err := parseSize(batchBytesText)
@@ -146,7 +152,7 @@ values from each object. Success writes no stdout.`,
 				b = s.NewBatch()
 				return nil
 			}
-			err = c.forInputKeys(inputFormat, fields, ":", func(rec codec.Record) error {
+			err = c.forInputRecords(inputFormat, fields, ":", func(rec codec.Record) error {
 				if err := b.Delete(args[0], rec.Key); err != nil {
 					return storageErr(err)
 				}
@@ -162,7 +168,7 @@ values from each object. Success writes no stdout.`,
 		},
 	}
 	cmd.Flags().StringVar(&inputFormat, "input-format", "line", "line|ndjson input")
-	cmd.Flags().StringArrayVar(&fields, "key-field", nil, "ndjson key field; repeat for compound keys")
+	cmd.Flags().StringArrayVar(&fields, "key-field", nil, "ndjson string key field; repeat for compound keys")
 	cmd.Flags().IntVar(&batchSize, "batch-size", 1000, "max records per batch")
 	cmd.Flags().StringVar(&batchBytesText, "batch-bytes", "4MB", "approx bytes per batch")
 	addSyncFlags(cmd, &sync)
@@ -180,12 +186,15 @@ func (c *cli) existsCommand() *cobra.Command {
 
 Matching records are emitted unchanged, preserving input order. Use --invert to
 emit missing records instead. --missing error fails on the first missing key.`,
-		Args: exactArgs(1),
+		Args: collectionArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := validateOneOf("input-format", inputFormat, "line", "ndjson"); err != nil {
 				return err
 			}
 			if err := validateOneOf("missing", missing, "skip", "error"); err != nil {
+				return err
+			}
+			if err := validateNDJSONKeyFields(inputFormat, fields, ":"); err != nil {
 				return err
 			}
 			s, err := c.openExisting()
@@ -209,7 +218,7 @@ emit missing records instead. --missing error fails on the first missing key.`,
 		},
 	}
 	cmd.Flags().StringVar(&inputFormat, "input-format", "line", "line|ndjson input")
-	cmd.Flags().StringArrayVar(&fields, "key-field", nil, "ndjson key field; repeat for compound keys")
+	cmd.Flags().StringArrayVar(&fields, "key-field", nil, "ndjson string key field; repeat for compound keys")
 	cmd.Flags().BoolVar(&invert, "invert", false, "pass missing records")
 	cmd.Flags().StringVar(&missing, "missing", "skip", "skip|error for missing keys")
 	return cmd
@@ -234,7 +243,7 @@ func (c *cli) lookupCommand(join bool) *cobra.Command {
 		Use:   use,
 		Short: lookupShort(join),
 		Long:  lookupLong(join),
-		Args:  exactArgs(1),
+		Args:  collectionArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if join {
 				if on == "" {
@@ -251,6 +260,9 @@ func (c *cli) lookupCommand(join bool) *cobra.Command {
 			}
 			if inputFormat == "ndjson" && asField == "" {
 				return usagef("ndjson lookup requires --as")
+			}
+			if err := validateNDJSONKeyFields(inputFormat, fields, keySep); err != nil {
+				return err
 			}
 			s, err := c.openExisting()
 			if err != nil {
@@ -279,8 +291,8 @@ func (c *cli) lookupCommand(join bool) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&inputFormat, "input-format", inputDefault, "line|ndjson input")
-	cmd.Flags().StringArrayVar(&fields, "key-field", nil, "lookup key field; repeat for compound keys")
-	cmd.Flags().StringVar(&keySep, "key-sep", ":", "compound key separator")
+	cmd.Flags().StringArrayVar(&fields, "key-field", nil, "lookup string key field; repeat for compound keys")
+	cmd.Flags().StringVar(&keySep, "key-sep", ":", "one-byte compound key separator")
 	cmd.Flags().StringVar(&asField, "as", "", "ndjson output field for stored value")
 	cmd.Flags().StringVar(&missing, "missing", missingDefault, "null|skip|error for missing keys")
 	if join {

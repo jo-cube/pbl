@@ -95,6 +95,41 @@ func TestCLIPutGetMissingAndScan(t *testing.T) {
 	}
 }
 
+func TestCLIInitRequiresIfNotExists(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "db")
+	if out, err, code := run(t, db, "", "init"); out != "" || err != "" || code != 0 {
+		t.Fatalf("first init out=%q err=%q code=%d", out, err, code)
+	}
+	if out, err, code := run(t, db, "", "init"); out != "" || !strings.Contains(err, "already initialized") || code != 5 {
+		t.Fatalf("second init out=%q err=%q code=%d", out, err, code)
+	}
+	if out, err, code := run(t, db, "", "init", "--if-not-exists"); out != "" || err != "" || code != 0 {
+		t.Fatalf("idempotent init out=%q err=%q code=%d", out, err, code)
+	}
+}
+
+func TestCLIValidatesBeforeCreatingDatabase(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{"collection", []string{"put", "bad/name", "k", "v"}},
+		{"raw key", []string{"import", "users", "--format", "raw"}},
+		{"ndjson key field", []string{"import", "users", "--format", "ndjson"}},
+		{"compound separator", []string{"import", "users", "--format", "ndjson", "--key-field", "a", "--key-field", "b", "--key-sep", "::"}},
+		{"stream key field", []string{"get-many", "users", "--input-format", "ndjson"}},
+	}
+	for _, tc := range cases {
+		db := filepath.Join(t.TempDir(), "db")
+		if out, err, code := run(t, db, "", tc.args...); out != "" || err == "" || code != 3 {
+			t.Fatalf("%s out=%q err=%q code=%d", tc.name, out, err, code)
+		}
+		if _, err := os.Stat(db); !os.IsNotExist(err) {
+			t.Fatalf("%s created database: %v", tc.name, err)
+		}
+	}
+}
+
 func TestCLIPutStdinValue(t *testing.T) {
 	db := filepath.Join(t.TempDir(), "db")
 	if out, err, code := run(t, db, "from stdin", "put", "users", "a", "--stdin"); out != "" || err != "" || code != 0 {
@@ -194,6 +229,39 @@ func TestCLIImportDuplicatePoliciesSeeCurrentInput(t *testing.T) {
 	}
 }
 
+func TestCLIImportDuplicatePoliciesAcrossBatches(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "db")
+	dups := kv(row("a", "A"), row("a", "B"))
+	if out, err, code := run(t, db, dups, "import", "users", "--format", "kv", "--ignore-duplicates", "--batch-size", "1"); out != "" || err != "" || code != 0 {
+		t.Fatalf("ignore duplicate out=%q err=%q code=%d", out, err, code)
+	}
+	if out, err, code := run(t, db, "", "scan", "users"); out != kv(row("a", "A")) || err != "" || code != 0 {
+		t.Fatalf("scan after duplicate out=%q err=%q code=%d", out, err, code)
+	}
+}
+
+func TestCLIImportDocumentsPartialMutation(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "db")
+	out, errText, code := run(t, db, "a\tA\ninvalid\n", "import", "users", "--format", "kv", "--batch-size", "1")
+	if out != "" || !strings.Contains(errText, "missing tab") || code != 4 {
+		t.Fatalf("import out=%q err=%q code=%d", out, errText, code)
+	}
+	if out, err, code := run(t, db, "", "get", "users", "a"); out != valueA || err != "" || code != 0 {
+		t.Fatalf("committed record out=%q err=%q code=%d", out, err, code)
+	}
+}
+
+func TestCLIApplyDocumentsPartialMutation(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "db")
+	out, errText, code := run(t, db, "a\t1\tA\nb\t4\txy", "apply", "users", "--format", "kcat", "--batch-size", "1")
+	if out != "" || !strings.Contains(errText, "truncated payload") || code != 4 {
+		t.Fatalf("apply out=%q err=%q code=%d", out, errText, code)
+	}
+	if out, err, code := run(t, db, "", "get", "users", "a"); out != valueA || err != "" || code != 0 {
+		t.Fatalf("committed record out=%q err=%q code=%d", out, err, code)
+	}
+}
+
 func TestCLIRejectsInvalidAndConflictingFlags(t *testing.T) {
 	db := filepath.Join(t.TempDir(), "db")
 	cases := []struct {
@@ -204,6 +272,7 @@ func TestCLIRejectsInvalidAndConflictingFlags(t *testing.T) {
 		{"sync", []string{"put", "users", "a", "A", "--sync", "--no-sync"}},
 		{"duplicates", []string{"import", "users", "--format", "kv", "--replace", "--ignore-duplicates"}},
 		{"range", []string{"keys", "users", "--range-start", "a"}},
+		{"frame shaping", []string{"scan", "users", "--format", "frame", "--keys-only"}},
 	}
 	for _, tc := range cases {
 		out, err, code := run(t, db, "", tc.args...)
@@ -307,6 +376,42 @@ func TestCLIApplyFrameAndStats(t *testing.T) {
 	out, errText, code = run(t, db, in, "--quiet", "apply", "users", "--format", "frame", "--stats")
 	if out != "" || errText != "" || code != 0 {
 		t.Fatalf("quiet stats out=%q err=%q code=%d", out, errText, code)
+	}
+}
+
+func TestCLIFrameExportRoundTrip(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "db")
+	frame := "P 2 3\nk\x00v\n\t"
+	if out, err, code := run(t, db, frame, "apply", "source", "--format", "frame"); out != "" || err != "" || code != 0 {
+		t.Fatalf("apply source out=%q err=%q code=%d", out, err, code)
+	}
+	out, errText, code := run(t, db, "", "export", "source", "--format", "frame")
+	if out != frame || errText != "" || code != 0 {
+		t.Fatalf("export out=%q err=%q code=%d", out, errText, code)
+	}
+	if out, err, code := run(t, db, out, "apply", "copy", "--format", "frame"); out != "" || err != "" || code != 0 {
+		t.Fatalf("apply copy out=%q err=%q code=%d", out, err, code)
+	}
+	if out, err, code := run(t, db, "", "export", "copy", "--format", "frame"); out != frame || err != "" || code != 0 {
+		t.Fatalf("copy export out=%q err=%q code=%d", out, err, code)
+	}
+}
+
+func TestCLINDJSONKeysAreUnambiguousStrings(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "db")
+	in := "{\"left\":\"a:b\",\"right\":\"c\"}\n"
+	if out, err, code := run(t, db, in, "import", "users", "--format", "ndjson", "--key-field", "left", "--key-field", "right"); out != "" || !strings.Contains(err, "contains separator") || code != 4 {
+		t.Fatalf("compound out=%q err=%q code=%d", out, err, code)
+	}
+	db = filepath.Join(t.TempDir(), "db")
+	if out, err, code := run(t, db, "{\"id\":1}\n", "import", "users", "--format", "ndjson", "--key-field", "id"); out != "" || !strings.Contains(err, "key fields must be strings") || code != 4 {
+		t.Fatalf("numeric out=%q err=%q code=%d", out, err, code)
+	}
+}
+
+func TestParseSizeRejectsOverflow(t *testing.T) {
+	if _, err := parseSize("18446744073709551615M"); err == nil {
+		t.Fatal("parseSize accepted overflow")
 	}
 }
 
