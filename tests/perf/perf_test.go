@@ -65,6 +65,29 @@ func BenchmarkKVImport(b *testing.B) {
 	}
 }
 
+func BenchmarkApplyDeleteHeavy(b *testing.B) {
+	input := frameApplyInput(25_000)
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"plain", nil},
+		{"bloom", []string{"--bloom-filter", "--expected-key-count", "25K"}},
+	} {
+		b.Run(tc.name, func(b *testing.B) {
+			b.ReportAllocs()
+			b.SetBytes(int64(len(input)))
+			for i := 0; i < b.N; i++ {
+				db := filepath.Join(b.TempDir(), fmt.Sprintf("db-%d", i))
+				args := append([]string{"--db", db, "apply", "kv", "--format", "frame", "--batch-size", "2000"}, tc.args...)
+				if code := app.Main(args, strings.NewReader(input), io.Discard, io.Discard); code != 0 {
+					b.Fatalf("apply exit code %d", code)
+				}
+			}
+		})
+	}
+}
+
 func BenchmarkScan(b *testing.B) {
 	db := filepath.Join(b.TempDir(), "db")
 	run(b, db, kvInput(25_000), "import", "kv", "--format", "kv")
@@ -121,6 +144,19 @@ func lookupKeys(n int) string {
 		}
 		fmt.Fprintf(&b, "k%06d", i)
 		b.WriteByte(newline)
+	}
+	return b.String()
+}
+
+func frameApplyInput(n int) string {
+	var b strings.Builder
+	for i := 0; i < n; i++ {
+		key := fmt.Sprintf("k%06d", i)
+		if i%10 < 7 {
+			fmt.Fprintf(&b, "D %d\n%s", len(key), key)
+			continue
+		}
+		fmt.Fprintf(&b, "P %d 1\n%sV", len(key), key)
 	}
 	return b.String()
 }

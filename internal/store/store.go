@@ -262,6 +262,28 @@ func (s *Store) Scan(collection string, opts ScanOptions, fn func(Record) error)
 	return s.scan(lower, upper, opts, fn)
 }
 
+// ScanKeys visits keys in order. Each key is valid only until fn returns.
+func (s *Store) ScanKeys(collection string, fn func([]byte) error) (err error) {
+	if err := ValidateCollection(collection); err != nil {
+		return err
+	}
+	lower, upper := keyenc.CollectionBounds(collection)
+	iter, err := s.db.NewIter(&pebble.IterOptions{LowerBound: lower, UpperBound: upper})
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, iter.Close()) }()
+	for valid := iter.First(); valid; valid = iter.Next() {
+		_, userKey, ok := keyenc.DecodeDataKeyView(iter.Key())
+		if ok {
+			if err := fn(userKey); err != nil {
+				return err
+			}
+		}
+	}
+	return iter.Error()
+}
+
 func (s *Store) Prefix(collection string, prefix []byte, opts ScanOptions, fn func(Record) error) error {
 	if err := ValidateCollection(collection); err != nil {
 		return err

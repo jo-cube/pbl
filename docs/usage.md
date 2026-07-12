@@ -165,6 +165,19 @@ kcat -C -b "$BROKERS" -t "$TOPIC" -o beginning -e -f '%k\t%S\t%s\n' \
 
 Payload length `-1` deletes the key. Payload length `0` stores an empty value.
 
+For delete-heavy streams, use an in-memory Bloom filter to avoid writing
+deletes for keys definitely absent from the collection:
+
+```sh
+kcat -C -b "$BROKERS" -t "$TOPIC" -o beginning -e -f '%k\t%S\t%s\n' \
+  | pbl apply users --format kcat --bloom-filter \
+      --expected-key-count 800M --batch-size 5000 --batch-bytes 32MB
+```
+
+The expected count includes existing keys and distinct keys put by the input.
+`800M` uses about 1 GB. Existing collections are scanned once before stdin is
+consumed; values are not copied into application memory.
+
 For binary-safe producers, emit frame records instead:
 
 ```text

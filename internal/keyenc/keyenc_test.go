@@ -12,6 +12,10 @@ func TestDataKeyRoundTrip(t *testing.T) {
 	if !ok || gotCollection != "users" || !bytes.Equal(gotKey, key) {
 		t.Fatalf("DecodeDataKey() = %q %v %v", gotCollection, gotKey, ok)
 	}
+	gotCollectionView, gotKeyView, ok := DecodeDataKeyView(phys)
+	if !ok || !bytes.Equal(gotCollectionView, []byte("users")) || !bytes.Equal(gotKeyView, key) {
+		t.Fatalf("DecodeDataKeyView() = %q %v %v", gotCollectionView, gotKeyView, ok)
+	}
 }
 
 func TestStorageFormatV1Keys(t *testing.T) {

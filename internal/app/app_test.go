@@ -118,6 +118,9 @@ func TestCLIValidatesBeforeCreatingDatabase(t *testing.T) {
 		{"ndjson key field", []string{"import", "users", "--format", "ndjson"}},
 		{"compound separator", []string{"import", "users", "--format", "ndjson", "--key-field", "a", "--key-field", "b", "--key-sep", "::"}},
 		{"stream key field", []string{"get-many", "users", "--input-format", "ndjson"}},
+		{"bloom without count", []string{"apply", "users", "--format", "frame", "--bloom-filter"}},
+		{"count without bloom", []string{"apply", "users", "--format", "frame", "--expected-key-count", "1K"}},
+		{"invalid bloom count", []string{"apply", "users", "--format", "frame", "--bloom-filter", "--expected-key-count", "0"}},
 	}
 	for _, tc := range cases {
 		db := filepath.Join(t.TempDir(), "db")
@@ -210,6 +213,12 @@ func TestCLIRootHelpAndVersion(t *testing.T) {
 	code = Main([]string{"import", "--help"}, strings.NewReader(""), &out, &err)
 	if code != 0 || !strings.Contains(out.String(), "Formats decide how input becomes keys and values") || !strings.Contains(out.String(), "--key-field") || err.String() != "" {
 		t.Fatalf("import help out=%q err=%q code=%d", out.String(), err.String(), code)
+	}
+	out.Reset()
+	err.Reset()
+	code = Main([]string{"apply", "--help"}, strings.NewReader(""), &out, &err)
+	if code != 0 || !strings.Contains(out.String(), "skip deletes for keys definitely absent") || !strings.Contains(out.String(), "--bloom-filter") || !strings.Contains(out.String(), "--expected-key-count") || err.String() != "" {
+		t.Fatalf("apply help out=%q err=%q code=%d", out.String(), err.String(), code)
 	}
 }
 
@@ -370,12 +379,35 @@ func TestCLIApplyFrameAndStats(t *testing.T) {
 			t.Fatalf("stats missing %q: %q", want, errText)
 		}
 	}
+	if strings.Contains(errText, "deletes_skipped") {
+		t.Fatalf("unfiltered stats changed: %q", errText)
+	}
 	if out, err, code := run(t, db, "", "scan", "users"); out != kv(row("b", "")) || err != "" || code != 0 {
 		t.Fatalf("scan out=%q err=%q code=%d", out, err, code)
 	}
 	out, errText, code = run(t, db, in, "--quiet", "apply", "users", "--format", "frame", "--stats")
 	if out != "" || errText != "" || code != 0 {
 		t.Fatalf("quiet stats out=%q err=%q code=%d", out, errText, code)
+	}
+}
+
+func TestCLIApplyBloomFilter(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "db")
+	if out, err, code := run(t, db, "", "put", "users", "seed", "old"); out != "" || err != "" || code != 0 {
+		t.Fatalf("seed out=%q err=%q code=%d", out, err, code)
+	}
+	in := "D 7\nmissingD 4\nseedP 1 1\naAD 1\naD 5\nlaterP 5 1\nlaterL"
+	out, errText, code := run(t, db, in, "apply", "users", "--format", "frame", "--batch-size", "1", "--bloom-filter", "--expected-key-count", "1M", "--stats")
+	if out != "" || code != 0 {
+		t.Fatalf("apply out=%q err=%q code=%d", out, errText, code)
+	}
+	for _, want := range []string{"puts=2", "deletes_skipped="} {
+		if !strings.Contains(errText, want) {
+			t.Fatalf("stats missing %q: %q", want, errText)
+		}
+	}
+	if out, err, code := run(t, db, "", "scan", "users"); out != "later\tL\n" || err != "" || code != 0 {
+		t.Fatalf("scan out=%q err=%q code=%d", out, err, code)
 	}
 }
 
@@ -412,6 +444,25 @@ func TestCLINDJSONKeysAreUnambiguousStrings(t *testing.T) {
 func TestParseSizeRejectsOverflow(t *testing.T) {
 	if _, err := parseSize("18446744073709551615M"); err == nil {
 		t.Fatal("parseSize accepted overflow")
+	}
+}
+
+func TestParseCount(t *testing.T) {
+	for input, want := range map[string]uint64{
+		"42":   42,
+		"2K":   2_000,
+		"800m": 800_000_000,
+		"1B":   1_000_000_000,
+	} {
+		got, err := parseCount(input)
+		if err != nil || got != want {
+			t.Fatalf("parseCount(%q) = %d, %v; want %d", input, got, err, want)
+		}
+	}
+	for _, input := range []string{"", "0", "-1", "1.5M", "1MB", "18446744074B"} {
+		if _, err := parseCount(input); err == nil {
+			t.Fatalf("parseCount(%q) succeeded", input)
+		}
 	}
 }
 
