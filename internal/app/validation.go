@@ -220,3 +220,23 @@ func parseSize(s string) (int, error) {
 	}
 	return int(n * mult), nil
 }
+
+func parseCount(s string) (uint64, error) {
+	s = strings.TrimSpace(strings.ToUpper(s))
+	mult := uint64(1)
+	for _, suffix := range []struct {
+		s string
+		m uint64
+	}{{"B", 1_000_000_000}, {"M", 1_000_000}, {"K", 1_000}} {
+		if strings.HasSuffix(s, suffix.s) {
+			mult = suffix.m
+			s = strings.TrimSuffix(s, suffix.s)
+			break
+		}
+	}
+	n, err := strconv.ParseUint(s, 10, 64)
+	if err != nil || n == 0 || n > ^uint64(0)/mult {
+		return 0, fmt.Errorf("invalid count")
+	}
+	return n * mult, nil
+}

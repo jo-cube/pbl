@@ -181,10 +181,10 @@ func (c *cli) importRecords(s *store.Store, collection, format, keyMode string, 
 }
 
 func (c *cli) applyCommand() *cobra.Command {
-	var format, batchBytesText string
+	var format, batchBytesText, expectedKeyCountText string
 	var batchSize int
 	var sync syncOptions
-	var stats bool
+	var stats, bloomFilter bool
 	cmd := &cobra.Command{
 		Use:   "apply <collection> --format <format>",
 		Short: "Apply put/delete records from stdin",
@@ -193,7 +193,8 @@ func (c *cli) applyCommand() *cobra.Command {
 The kcat format materializes compacted Kafka topics. The frame format is
 binary-safe for custom producers. Writes are batched and not synced unless
 --sync is set. Success writes no stdout; --stats writes ingest metrics to
-stderr.`,
+stderr. Use --bloom-filter with --expected-key-count to skip deletes for keys
+definitely absent from the collection.`,
 		Args: collectionArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format == "" {
@@ -208,9 +209,27 @@ stderr.`,
 			if err := validateBatchSize(batchSize); err != nil {
 				return err
 			}
+			if bloomFilter != (expectedKeyCountText != "") {
+				return usagef("--bloom-filter and --expected-key-count must be used together")
+			}
+			var expectedKeyCount uint64
+			if bloomFilter {
+				var err error
+				expectedKeyCount, err = parseCount(expectedKeyCountText)
+				if err != nil {
+					return usagef("invalid --expected-key-count")
+				}
+			}
 			batchBytes, err := parseSize(batchBytesText)
 			if err != nil {
 				return usageErr(err)
+			}
+			var deleteFilter *deleteBloom
+			if bloomFilter {
+				deleteFilter, err = newDeleteBloom(expectedKeyCount)
+				if err != nil {
+					return usageErr(err)
+				}
 			}
 			s, err := c.open()
 			if err != nil {
@@ -221,12 +240,24 @@ stderr.`,
 			if err := s.EnsureCollection(collection); err != nil {
 				return storageErr(err)
 			}
-			result, err := c.applyRecords(s, collection, format, batchSize, batchBytes, store.WriteOptions{Sync: writeSync(sync, false)})
+			if bloomFilter {
+				if err := s.ScanKeys(collection, func(key []byte) error {
+					deleteFilter.Add(key)
+					return nil
+				}); err != nil {
+					return storageErr(err)
+				}
+			}
+			result, err := c.applyRecords(s, collection, format, batchSize, batchBytes, store.WriteOptions{Sync: writeSync(sync, false)}, deleteFilter)
 			if err != nil {
 				return err
 			}
 			if stats && !c.quiet {
-				fmt.Fprintf(c.stderr, "pbl: applied records=%d puts=%d deletes=%d batches=%d bytes=%d duration=%s\n", result.records, result.puts, result.deletes, result.batches, result.bytes, result.elapsed.Round(time.Millisecond))
+				fmt.Fprintf(c.stderr, "pbl: applied records=%d puts=%d deletes=%d", result.records, result.puts, result.deletes)
+				if bloomFilter {
+					fmt.Fprintf(c.stderr, " deletes_skipped=%d", result.deletesSkipped)
+				}
+				fmt.Fprintf(c.stderr, " batches=%d bytes=%d duration=%s\n", result.batches, result.bytes, result.elapsed.Round(time.Millisecond))
 			}
 			return nil
 		},
@@ -235,20 +266,23 @@ stderr.`,
 	cmd.Flags().IntVar(&batchSize, "batch-size", 1000, "max records per batch")
 	cmd.Flags().StringVar(&batchBytesText, "batch-bytes", "4MB", "approx bytes per batch")
 	cmd.Flags().BoolVar(&stats, "stats", false, "write ingest stats to stderr")
+	cmd.Flags().BoolVar(&bloomFilter, "bloom-filter", false, "skip deletes for keys definitely absent from the collection")
+	cmd.Flags().StringVar(&expectedKeyCountText, "expected-key-count", "", "expected distinct stored or incoming put keys; supports decimal K, M, B; requires --bloom-filter")
 	addSyncFlags(cmd, &sync)
 	return cmd
 }
 
 type applyStats struct {
-	records int64
-	puts    int64
-	deletes int64
-	batches int64
-	bytes   int64
-	elapsed time.Duration
+	records        int64
+	puts           int64
+	deletes        int64
+	deletesSkipped int64
+	batches        int64
+	bytes          int64
+	elapsed        time.Duration
 }
 
-func (c *cli) applyRecords(s *store.Store, collection, format string, batchSize, batchBytes int, writeOpts store.WriteOptions) (applyStats, error) {
+func (c *cli) applyRecords(s *store.Store, collection, format string, batchSize, batchBytes int, writeOpts store.WriteOptions, deleteFilter *deleteBloom) (applyStats, error) {
 	start := time.Now()
 	var result applyStats
 	b := s.NewBatch()
@@ -266,14 +300,22 @@ func (c *cli) applyRecords(s *store.Store, collection, format string, batchSize,
 		return nil
 	}
 	add := func(rec codec.ApplyRecord) error {
+		result.bytes = rec.Bytes
 		if len(rec.Key) == 0 {
 			return badInputf("record %d: empty key", rec.Line)
+		}
+		if rec.Delete && deleteFilter != nil && !deleteFilter.MayContain(rec.Key) {
+			result.deletesSkipped++
+			return nil
 		}
 		var err error
 		if rec.Delete {
 			err = b.Delete(collection, rec.Key)
 			result.deletes++
 		} else {
+			if deleteFilter != nil {
+				deleteFilter.Add(rec.Key)
+			}
 			err = b.Put(collection, rec.Key, rec.Value)
 			result.puts++
 		}
@@ -281,7 +323,6 @@ func (c *cli) applyRecords(s *store.Store, collection, format string, batchSize,
 			return storageErr(err)
 		}
 		result.records++
-		result.bytes = rec.Bytes
 		if b.Count() >= batchSize || b.ApproxBytes() >= batchBytes {
 			return flush()
 		}
