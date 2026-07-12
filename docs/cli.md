@@ -105,7 +105,8 @@ Import and apply:
 
 ```text
 pbl import <collection> --format kv|line|ndjson|raw
-pbl apply <collection> --format kcat|frame
+pbl apply <collection> --format kcat|frame \
+  [--bloom-filter --expected-key-count <count>]
 ```
 
 See [commands/import-apply.md](commands/import-apply.md).
