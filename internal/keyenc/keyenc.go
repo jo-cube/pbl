@@ -66,19 +66,31 @@ func RangeBounds(collection string, start, end []byte) (lower, upper []byte) {
 }
 
 func DecodeDataKey(physical []byte) (string, []byte, bool) {
-	if len(physical) < 3 || physical[0] != DataPrefix {
+	collection, userKey, ok := DecodeDataKeyView(physical)
+	if !ok {
 		return "", nil, false
+	}
+	return string(collection), append([]byte(nil), userKey...), true
+}
+
+// DecodeDataKeyView returns slices backed by physical.
+func DecodeDataKeyView(physical []byte) ([]byte, []byte, bool) {
+	if len(physical) < 3 || physical[0] != DataPrefix {
+		return nil, nil, false
 	}
 	n, used := binary.Uvarint(physical[1:])
 	if used <= 0 {
-		return "", nil, false
+		return nil, nil, false
 	}
 	pos := 1 + used
-	end := pos + int(n)
-	if end >= len(physical) || physical[end] != 0x00 {
-		return "", nil, false
+	if pos >= len(physical) || n > uint64(len(physical)-pos-1) {
+		return nil, nil, false
 	}
-	return string(physical[pos:end]), append([]byte(nil), physical[end+1:]...), true
+	end := pos + int(n)
+	if physical[end] != 0x00 {
+		return nil, nil, false
+	}
+	return physical[pos:end], physical[end+1:], true
 }
 
 func NextPrefix(b []byte) ([]byte, bool) {

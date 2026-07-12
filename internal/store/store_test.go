@@ -39,6 +39,16 @@ func TestStorePutGetDeleteScan(t *testing.T) {
 	if want := []string{"a=A", "b=B"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("scan = %v, want %v", got, want)
 	}
+	got = nil
+	if err := s.ScanKeys("users", func(key []byte) error {
+		got = append(got, string(key))
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"a", "b"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("key scan = %v, want %v", got, want)
+	}
 	if err := s.Delete("users", []byte("a"), WriteOptions{}); err != nil {
 		t.Fatal(err)
 	}
@@ -194,5 +204,8 @@ func TestReadOperationsValidateCollection(t *testing.T) {
 	}
 	if err := s.Scan("bad/name", ScanOptions{}, func(Record) error { return nil }); err == nil || !strings.Contains(err.Error(), "invalid collection") {
 		t.Fatalf("Scan invalid collection err = %v", err)
+	}
+	if err := s.ScanKeys("bad/name", func([]byte) error { return nil }); err == nil || !strings.Contains(err.Error(), "invalid collection") {
+		t.Fatalf("ScanKeys invalid collection err = %v", err)
 	}
 }
