@@ -30,6 +30,8 @@ keys.
 - Stream stdin/stdout workflows with bounded memory.
 - Batch imports and deletes.
 - Use Pebble iterators for ordered reads.
+- Treat slices passed to streaming callbacks as views; copy only when retaining
+  them after the callback returns.
 - Keep values opaque in storage.
 - Add flags only when behavior is worth documenting and testing.
 
@@ -111,8 +113,23 @@ Benchmark smoke:
 go test ./tests/perf -run '^$' -bench . -benchtime=1x
 ```
 
+Representative tombstone-heavy apply and saturated Bloom lookup benchmarks:
+
+```sh
+go test ./tests/perf -run '^$' -bench BenchmarkApplyTombstoneDominated -benchmem -benchtime=1x
+go test ./internal/app -run '^$' -bench BenchmarkDeleteBloomLookup -benchmem -benchtime=1s -cpu 1,2,4,8
+```
+
+The apply benchmark uses one million Kcat records, 0.5% puts, and unique
+never-seen tombstones in a fresh database. The Bloom benchmark preloads ten
+million keys before measuring absent lookups against the saturated filter.
+
 These checks are not a full performance harness. They exist to catch obvious
 streaming or batching regressions.
+
+The CLI buffers stdout once at the application edge. Pebble SSTables use
+10-bit-per-key Bloom filters for point lookups; this is separate from the
+in-memory `apply --bloom-filter`, which skips absent deletes.
 
 ## Release Packaging
 
