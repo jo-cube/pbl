@@ -3,7 +3,6 @@ package app
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 
 	"github.com/jo-cube/pbl/internal/codec"
@@ -30,7 +29,7 @@ func (c *cli) forInputRecords(inputFormat string, fields []string, sep string, f
 				}
 				return runtimeErr(err)
 			}
-			if err := check(codec.Record{Key: append([]byte(nil), line...), Raw: append([]byte(nil), line...), Line: n}); err != nil {
+			if err := check(codec.Record{Key: line, Raw: line, Line: n}); err != nil {
 				return err
 			}
 		}
@@ -102,14 +101,11 @@ func (c *cli) writeScanRecord(key, value []byte, format string, keysOnly, values
 func (c *cli) writeRecord(key, value []byte, format string, withKey, newline bool) error {
 	switch format {
 	case "raw":
-		if _, err := c.stdout.Write(value); err != nil {
-			return runtimeWrap(err)
-		}
 		if newline {
-			_, err := fmt.Fprintln(c.stdout)
-			return runtimeWrap(err)
+			return runtimeWrap(codec.WriteLine(c.stdout, value))
 		}
-		return nil
+		_, err := c.stdout.Write(value)
+		return runtimeWrap(err)
 	case "kv":
 		return runtimeWrap(codec.WriteKV(c.stdout, key, value))
 	case "ndjson":
@@ -135,11 +131,9 @@ func (c *cli) handleMissing(policy string, key []byte, format string, withKey bo
 		}
 		if format == "ndjson" && withKey {
 			out, _ := json.Marshal(map[string]any{"_key": string(key), "_value": nil})
-			_, err := fmt.Fprintln(c.stdout, string(out))
-			return runtimeWrap(err)
+			return runtimeWrap(codec.WriteLine(c.stdout, out))
 		}
-		_, err := fmt.Fprintln(c.stdout, "null")
-		return runtimeWrap(err)
+		return runtimeWrap(codec.WriteLine(c.stdout, []byte("null")))
 	default:
 		return usagef("unknown missing policy %q", policy)
 	}

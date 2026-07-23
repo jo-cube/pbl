@@ -149,6 +149,14 @@ func TestReadFrameApplyRecordsRejectsTruncatedBody(t *testing.T) {
 	}
 }
 
+func TestReadFrameApplyRecordsRejectsMalformedHeaders(t *testing.T) {
+	for _, input := range []string{"P 1\n", "P 1 1 1\n", "D 1 1\n"} {
+		if err := ReadFrameApplyRecords(strings.NewReader(input), func(ApplyRecord) error { return nil }); err == nil {
+			t.Fatalf("ReadFrameApplyRecords(%q) succeeded", input)
+		}
+	}
+}
+
 func TestApplyReadersRejectOversizedRecords(t *testing.T) {
 	kcat := "a\t" + strconv.FormatInt(MaxRecordBytes+1, 10) + "\t"
 	if err := ReadKcatApplyRecords(strings.NewReader(kcat), func(ApplyRecord) error { return nil }); !errors.Is(err, ErrRecordTooLarge) {
