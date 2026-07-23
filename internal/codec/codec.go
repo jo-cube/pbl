@@ -81,9 +81,10 @@ func ParseKV(line []byte) (Record, error) {
 	if i == 0 {
 		return Record{}, fmt.Errorf("empty key")
 	}
-	return Record{Key: append([]byte(nil), line[:i]...), Value: append([]byte(nil), line[i+1:]...)}, nil
+	return Record{Key: line[:i], Value: line[i+1:]}, nil
 }
 
+// Record byte slices passed to fn are valid only until fn returns.
 func ReadKVRecords(r io.Reader, fn func(Record) error) error {
 	lr := NewLineReader(r)
 	for {
@@ -98,7 +99,7 @@ func ReadKVRecords(r io.Reader, fn func(Record) error) error {
 		if err != nil {
 			return fmt.Errorf("line %d: %w", n, err)
 		}
-		rec.Raw = append([]byte(nil), line...)
+		rec.Raw = line
 		rec.Line = n
 		if err := fn(rec); err != nil {
 			return err
@@ -106,6 +107,7 @@ func ReadKVRecords(r io.Reader, fn func(Record) error) error {
 	}
 }
 
+// Record byte slices passed to fn are valid only until fn returns.
 func ReadLineRecords(r io.Reader, keyMode string, fn func(Record) error) error {
 	lr := NewLineReader(r)
 	for {
@@ -124,14 +126,14 @@ func ReadLineRecords(r io.Reader, keyMode string, fn func(Record) error) error {
 			return fmt.Errorf("line %d: empty key", n)
 		}
 		if err := fn(Record{
-			Key: append([]byte(nil), key...), Value: append([]byte(nil), line...),
-			Raw: append([]byte(nil), line...), Line: n,
+			Key: key, Value: line, Raw: line, Line: n,
 		}); err != nil {
 			return err
 		}
 	}
 }
 
+// Record byte slices passed to fn are valid only until fn returns.
 func ReadNDJSONRecords(r io.Reader, fields []string, sep string, fn func(Record) error) error {
 	lr := NewLineReader(r)
 	for {
@@ -157,8 +159,7 @@ func ReadNDJSONRecords(r io.Reader, fields []string, sep string, fn func(Record)
 			return fmt.Errorf("line %d: %w", n, err)
 		}
 		if err := fn(Record{
-			Key: []byte(key), Value: append([]byte(nil), line...),
-			Raw: append([]byte(nil), line...), Line: n, JSON: obj,
+			Key: []byte(key), Value: line, Raw: line, Line: n, JSON: obj,
 		}); err != nil {
 			return err
 		}
@@ -184,6 +185,7 @@ func ReadKcatApplyRecords(r io.Reader, fn func(ApplyRecord) error) error {
 		if len(key) == 0 {
 			return fmt.Errorf("record %d: empty key", line)
 		}
+		key = append([]byte(nil), key...)
 		sizeText, n, err := readUntil(br, '\t', MaxRecordBytes)
 		total += n
 		if errors.Is(err, ErrRecordTooLarge) {
@@ -199,7 +201,7 @@ func ReadKcatApplyRecords(r io.Reader, fn func(ApplyRecord) error) error {
 		if size > MaxRecordBytes || size >= 0 && size > int64(MaxRecordBytes-len(key)) {
 			return fmt.Errorf("record %d: %w", line, ErrRecordTooLarge)
 		}
-		rec := ApplyRecord{Delete: size == -1, Key: append([]byte(nil), key...), Line: line}
+		rec := ApplyRecord{Delete: size == -1, Key: key, Line: line}
 		if size >= 0 {
 			rec.Value = make([]byte, size)
 			nn, err := io.ReadFull(br, rec.Value)
@@ -243,8 +245,7 @@ func ReadFrameApplyRecords(r io.Reader, fn func(ApplyRecord) error) error {
 		if err != nil {
 			return fmt.Errorf("record %d: truncated header", line)
 		}
-		parts := strings.Split(string(header), " ")
-		rec, body, err := parseFrameHeader(parts, line)
+		rec, body, err := parseFrameHeader(header, line)
 		if err != nil {
 			return err
 		}
@@ -260,16 +261,21 @@ func ReadFrameApplyRecords(r io.Reader, fn func(ApplyRecord) error) error {
 	}
 }
 
-func parseFrameHeader(parts []string, line int64) (ApplyRecord, []byte, error) {
-	if len(parts) == 0 {
+func parseFrameHeader(header []byte, line int64) (ApplyRecord, []byte, error) {
+	if len(header) == 0 {
 		return ApplyRecord{}, nil, fmt.Errorf("record %d: empty header", line)
 	}
-	switch parts[0] {
-	case "P":
-		if len(parts) != 3 {
+	op, lengths, ok := bytes.Cut(header, spaceBytes)
+	if !ok || len(op) != 1 {
+		return ApplyRecord{}, nil, fmt.Errorf("record %d: unknown operation", line)
+	}
+	switch op[0] {
+	case 'P':
+		keyText, valueText, ok := bytes.Cut(lengths, spaceBytes)
+		if !ok || bytes.Contains(valueText, spaceBytes) {
 			return ApplyRecord{}, nil, fmt.Errorf("record %d: invalid put header", line)
 		}
-		keyLen, valueLen, err := parseFrameLengths(parts[1], parts[2])
+		keyLen, valueLen, err := parseFrameLengths(keyText, valueText)
 		if err != nil {
 			return ApplyRecord{}, nil, fmt.Errorf("record %d: %w", line, err)
 		}
@@ -278,11 +284,11 @@ func parseFrameHeader(parts []string, line int64) (ApplyRecord, []byte, error) {
 		}
 		body := make([]byte, keyLen+valueLen)
 		return ApplyRecord{Key: body[:keyLen], Value: body[keyLen:], Line: line}, body, nil
-	case "D":
-		if len(parts) != 2 {
+	case 'D':
+		if bytes.Contains(lengths, spaceBytes) {
 			return ApplyRecord{}, nil, fmt.Errorf("record %d: invalid delete header", line)
 		}
-		keyLen, err := parseFrameLength(parts[1])
+		keyLen, err := parseFrameLength(lengths)
 		if err != nil {
 			return ApplyRecord{}, nil, fmt.Errorf("record %d: %w", line, err)
 		}
@@ -296,7 +302,7 @@ func parseFrameHeader(parts []string, line int64) (ApplyRecord, []byte, error) {
 	}
 }
 
-func parseFrameLengths(keyText, valueText string) (int, int, error) {
+func parseFrameLengths(keyText, valueText []byte) (int, int, error) {
 	keyLen, err := parseFrameLength(keyText)
 	if err != nil {
 		return 0, 0, err
@@ -305,8 +311,8 @@ func parseFrameLengths(keyText, valueText string) (int, int, error) {
 	return keyLen, valueLen, err
 }
 
-func parseFrameLength(s string) (int, error) {
-	n, err := strconv.Atoi(s)
+func parseFrameLength(s []byte) (int, error) {
+	n, err := strconv.Atoi(string(s))
 	if err != nil || n < 0 {
 		return 0, fmt.Errorf("invalid length")
 	}
@@ -326,6 +332,12 @@ func readUntil(r *bufio.Reader, delim byte, maxBytes int) ([]byte, int64, error)
 		if contentLen > maxBytes {
 			return nil, n, ErrRecordTooLarge
 		}
+		if len(out) == 0 && err != bufio.ErrBufferFull {
+			if err == nil {
+				return part[:len(part)-1], n, nil
+			}
+			return part, n, err
+		}
 		out = append(out, part...)
 		if err == nil {
 			return out[:len(out)-1], n, nil
@@ -336,6 +348,12 @@ func readUntil(r *bufio.Reader, delim byte, maxBytes int) ([]byte, int64, error)
 		return out, n, err
 	}
 }
+
+var (
+	tabBytes     = []byte{'\t'}
+	newlineBytes = []byte{'\n'}
+	spaceBytes   = []byte{' '}
+)
 
 func ExtractKey(obj map[string]any, fields []string, sep string) (string, error) {
 	if len(fields) == 0 {
@@ -388,14 +406,17 @@ func WriteKV(w io.Writer, key, value []byte) error {
 	if _, err := w.Write(key); err != nil {
 		return err
 	}
-	if _, err := w.Write([]byte{'\t'}); err != nil {
+	if _, err := w.Write(tabBytes); err != nil {
 		return err
 	}
 	return WriteLine(w, value)
 }
 
 func WriteLine(w io.Writer, value []byte) error {
-	_, err := w.Write(append(append([]byte(nil), value...), '\n'))
+	if _, err := w.Write(value); err != nil {
+		return err
+	}
+	_, err := w.Write(newlineBytes)
 	return err
 }
 
@@ -403,7 +424,13 @@ func WriteFramePut(w io.Writer, key, value []byte) error {
 	if len(key) > MaxRecordBytes || len(value) > MaxRecordBytes-len(key) {
 		return ErrRecordTooLarge
 	}
-	if _, err := fmt.Fprintf(w, "P %d %d\n", len(key), len(value)); err != nil {
+	var buf [64]byte
+	header := append(buf[:0], 'P', ' ')
+	header = strconv.AppendInt(header, int64(len(key)), 10)
+	header = append(header, ' ')
+	header = strconv.AppendInt(header, int64(len(value)), 10)
+	header = append(header, '\n')
+	if _, err := w.Write(header); err != nil {
 		return err
 	}
 	if _, err := w.Write(key); err != nil {
@@ -418,7 +445,7 @@ func FormatNDJSONValue(key, value []byte, includeKey bool) ([]byte, error) {
 		if !json.Valid(value) {
 			return nil, fmt.Errorf("value is not valid JSON")
 		}
-		return append([]byte(nil), value...), nil
+		return value, nil
 	}
 	var raw any
 	if err := json.Unmarshal(value, &raw); err != nil {

@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/cockroachdb/pebble/v2"
+	"github.com/cockroachdb/pebble/v2/bloom"
 	"github.com/jo-cube/pbl/internal/keyenc"
 )
 
@@ -32,6 +33,7 @@ type ScanOptions struct {
 	Limit int64
 }
 
+// Record slices passed to scan callbacks are valid only until the callback returns.
 type Record struct {
 	Key   []byte
 	Value []byte
@@ -73,7 +75,10 @@ func OpenExisting(path string) (*Store, error) {
 }
 
 func open(path string, mustExist bool) (*Store, error) {
-	db, err := pebble.Open(path, &pebble.Options{Logger: discardLogger{}, ErrorIfNotExists: mustExist})
+	opts := &pebble.Options{Logger: discardLogger{}, ErrorIfNotExists: mustExist}
+	// L0's table filter is inherited by later levels.
+	opts.Levels[0].FilterPolicy = bloom.FilterPolicy(10)
+	db, err := pebble.Open(path, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -92,6 +97,10 @@ func open(path string, mustExist bool) (*Store, error) {
 		if !empty {
 			_ = db.Close()
 			return nil, ErrUnmarkedDatabase
+		}
+		if mustExist {
+			_ = db.Close()
+			return nil, ErrUninitialized
 		}
 	}
 	return s, nil
@@ -311,12 +320,11 @@ func (s *Store) scan(lower, upper []byte, opts ScanOptions, fn func(Record) erro
 		if opts.Limit > 0 && n >= opts.Limit {
 			break
 		}
-		_, userKey, ok := keyenc.DecodeDataKey(iter.Key())
+		_, userKey, ok := keyenc.DecodeDataKeyView(iter.Key())
 		if !ok {
 			continue
 		}
-		value := append([]byte(nil), iter.Value()...)
-		if err := fn(Record{Key: userKey, Value: value}); err != nil {
+		if err := fn(Record{Key: userKey, Value: iter.Value()}); err != nil {
 			return err
 		}
 		n++

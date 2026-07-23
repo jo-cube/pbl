@@ -22,19 +22,23 @@ func CollectionMetaPrefix() []byte {
 }
 
 func DataKey(collection string, userKey []byte) []byte {
-	base := CollectionBase(collection)
-	out := make([]byte, 0, len(base)+len(userKey))
-	out = append(out, base...)
-	out = append(out, userKey...)
-	return out
+	var buf [binary.MaxVarintLen64]byte
+	n := binary.PutUvarint(buf[:], uint64(len(collection)))
+	out := make([]byte, 0, 1+n+len(collection)+1+len(userKey))
+	out = appendCollectionBase(out, collection, buf[:n])
+	return append(out, userKey...)
 }
 
 func CollectionBase(collection string) []byte {
 	var buf [binary.MaxVarintLen64]byte
 	n := binary.PutUvarint(buf[:], uint64(len(collection)))
 	out := make([]byte, 0, 1+n+len(collection)+1)
+	return appendCollectionBase(out, collection, buf[:n])
+}
+
+func appendCollectionBase(out []byte, collection string, length []byte) []byte {
 	out = append(out, DataPrefix)
-	out = append(out, buf[:n]...)
+	out = append(out, length...)
 	out = append(out, collection...)
 	out = append(out, 0x00)
 	return out
