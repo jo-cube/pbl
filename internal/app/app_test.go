@@ -65,6 +65,16 @@ func (errWriter) Write([]byte) (int, error) {
 	return 0, errBoom
 }
 
+type writeCounter struct {
+	bytes.Buffer
+	writes int
+}
+
+func (w *writeCounter) Write(p []byte) (int, error) {
+	w.writes++
+	return w.Buffer.Write(p)
+}
+
 func run(t *testing.T, db string, stdin string, args ...string) (string, string, int) {
 	t.Helper()
 	var out, err bytes.Buffer
@@ -193,6 +203,30 @@ func TestCLIWriteErrorIsRuntimeError(t *testing.T) {
 	code := Main([]string{"--db", db, "get", "users", "missing", "--missing", "null"}, strings.NewReader(""), errWriter{}, &stderr)
 	if code != 1 || !strings.Contains(stderr.String(), "boom") {
 		t.Fatalf("write failure stderr=%q code=%d", stderr.String(), code)
+	}
+	if out, err, code := run(t, db, usersAB, "import", "users", "--format", "kv"); out != "" || err != "" || code != 0 {
+		t.Fatalf("import out=%q err=%q code=%d", out, err, code)
+	}
+	stderr.Reset()
+	code = Main([]string{"--db", db, "get-many", "users", "--missing", "error"}, strings.NewReader("a\nmissing\n"), errWriter{}, &stderr)
+	if code != 1 || !strings.Contains(stderr.String(), "boom") {
+		t.Fatalf("write failure with command error stderr=%q code=%d", stderr.String(), code)
+	}
+}
+
+func TestCLIStreamOutputIsBuffered(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "db")
+	if out, err, code := run(t, db, usersAB, "import", "users", "--format", "kv"); out != "" || err != "" || code != 0 {
+		t.Fatalf("import out=%q err=%q code=%d", out, err, code)
+	}
+	var out writeCounter
+	var stderr bytes.Buffer
+	code := Main([]string{"--db", db, "scan", "users"}, strings.NewReader(""), &out, &stderr)
+	if code != 0 || out.String() != usersAB || stderr.String() != "" {
+		t.Fatalf("scan out=%q err=%q code=%d", out.String(), stderr.String(), code)
+	}
+	if out.writes != 1 {
+		t.Fatalf("stdout writes = %d, want 1 buffered write", out.writes)
 	}
 }
 

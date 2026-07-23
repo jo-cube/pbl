@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"os"
@@ -12,13 +13,18 @@ import (
 
 func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	out := &countingWriter{w: stdout}
-	c := &cli{stdin: stdin, stdout: out, stderr: stderr, dbPath: ".pbl"}
+	bufferedOut := bufio.NewWriterSize(out, 64*1024)
+	c := &cli{stdin: stdin, stdout: bufferedOut, stderr: stderr, dbPath: ".pbl"}
 	cmd := c.command()
 	cmd.SetArgs(args)
 	cmd.SetIn(stdin)
-	cmd.SetOut(out)
+	cmd.SetOut(bufferedOut)
 	cmd.SetErr(stderr)
-	if err := cmd.Execute(); err != nil {
+	err := cmd.Execute()
+	if flushErr := bufferedOut.Flush(); flushErr != nil {
+		err = runtimeErr(flushErr)
+	}
+	if err != nil {
 		if !isAppError(err) {
 			err = usageErr(err)
 		}
@@ -131,10 +137,6 @@ func (c *cli) openExisting() (*store.Store, error) {
 	}
 	s, err := store.OpenExisting(c.dbPath)
 	if err != nil {
-		return nil, storageErr(err)
-	}
-	if err := s.RequireInitialized(); err != nil {
-		_ = s.Close()
 		return nil, storageErr(err)
 	}
 	return s, nil
