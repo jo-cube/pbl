@@ -57,6 +57,29 @@ func TestStorePutGetDeleteScan(t *testing.T) {
 	}
 }
 
+func TestBatchWritesAcrossCollections(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	b := s.NewBatch()
+	defer b.Close()
+	for _, collection := range []string{"users", "teams", "users"} {
+		if err := b.Put(collection, []byte(collection), []byte("value")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := b.Commit(WriteOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, collection := range []string{"users", "teams"} {
+		if value, err := s.Get(collection, []byte(collection)); err != nil || string(value) != "value" {
+			t.Fatalf("Get(%q) = %q, %v", collection, value, err)
+		}
+	}
+}
+
 func TestInitAndRequireInitialized(t *testing.T) {
 	s, err := Open(t.TempDir())
 	if err != nil {
@@ -108,6 +131,20 @@ func TestOpenExistingDoesNotCreateDatabase(t *testing.T) {
 	}
 	if len(entries) != 0 {
 		t.Fatalf("OpenExisting created %d files", len(entries))
+	}
+}
+
+func TestOpenExistingRequiresInitializedDatabase(t *testing.T) {
+	path := t.TempDir()
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := OpenExisting(path); !errors.Is(err, ErrUninitialized) {
+		t.Fatalf("OpenExisting uninitialized database = %v", err)
 	}
 }
 
