@@ -63,6 +63,11 @@ func TestBatchWritesAcrossCollections(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
+	for _, collection := range []string{"users", "teams"} {
+		if err := s.EnsureCollection(collection); err != nil {
+			t.Fatal(err)
+		}
+	}
 	b := s.NewBatch()
 	defer b.Close()
 	for _, collection := range []string{"users", "teams", "users"} {

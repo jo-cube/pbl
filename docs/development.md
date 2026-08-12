@@ -29,6 +29,7 @@ keys.
 - Keep stderr for errors and diagnostics.
 - Stream stdin/stdout workflows with bounded memory.
 - Batch imports and deletes.
+- Ensure collection metadata before committing batched puts.
 - Use Pebble iterators for ordered reads.
 - Treat slices passed to streaming callbacks as views; copy only when retaining
   them after the callback returns.

@@ -337,6 +337,7 @@ func (s *Store) scan(lower, upper []byte, opts ScanOptions, fn func(Record) erro
 	return iter.Error()
 }
 
+// NewBatch writes data only; callers adding puts must first call EnsureCollection.
 func (s *Store) NewBatch() *Batch {
 	return &Batch{batch: s.db.NewBatch()}
 }
