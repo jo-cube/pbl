@@ -145,8 +145,8 @@ func (c *cli) statsCommand() *cobra.Command {
 		Short: "Show storage metrics",
 		Long: `Show Pebble storage metrics for the database directory.
 
-The default text output is stable and small. --raw appends Pebble's raw metrics
-dump for debugging and may change with Pebble releases.`,
+The default output is stable and small. --raw includes Pebble's raw metrics dump
+for debugging and may change with Pebble releases.`,
 		Args: exactArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := validateOneOf("format", format, "text", "ndjson"); err != nil {
@@ -156,8 +156,8 @@ dump for debugging and may change with Pebble releases.`,
 			if err != nil {
 				return err
 			}
-			defer s.Close()
-			stats, err := s.Stats()
+			defer c.closeStore(s)
+			stats, err := s.Stats(raw)
 			if err != nil {
 				return storageErr(err)
 			}
@@ -176,6 +176,6 @@ dump for debugging and may change with Pebble releases.`,
 		},
 	}
 	cmd.Flags().StringVar(&format, "format", "text", "text|ndjson output")
-	cmd.Flags().BoolVar(&raw, "raw", false, "append raw Pebble metrics")
+	cmd.Flags().BoolVar(&raw, "raw", false, "include raw Pebble metrics")
 	return cmd
 }

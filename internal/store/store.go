@@ -40,16 +40,16 @@ type Record struct {
 }
 
 type Info struct {
-	Path                 string
-	StorageFormatVersion int
-	CollectionCount      int
-	CreatedAt            string
+	Path                 string `json:"path"`
+	StorageFormatVersion int    `json:"storage_format_version"`
+	CollectionCount      int    `json:"collection_count"`
+	CreatedAt            string `json:"created_at"`
 }
 
 type Stats struct {
-	Path     string
-	Raw      string
-	DiskUsed uint64
+	Path     string `json:"path"`
+	DiskUsed uint64 `json:"disk_used"`
+	Raw      string `json:"raw,omitempty"`
 }
 
 type Store struct {
@@ -213,12 +213,16 @@ func (s *Store) Info() (Info, error) {
 	if err != nil && !errors.Is(err, pebble.ErrNotFound) {
 		return Info{}, err
 	}
-	return Info{s.path, version, len(collections), created}, nil
+	return Info{Path: s.path, StorageFormatVersion: version, CollectionCount: len(collections), CreatedAt: created}, nil
 }
 
-func (s *Store) Stats() (Stats, error) {
+func (s *Store) Stats(includeRaw bool) (Stats, error) {
 	m := s.db.Metrics()
-	return Stats{Path: s.path, Raw: m.String(), DiskUsed: m.DiskSpaceUsage()}, nil
+	stats := Stats{Path: s.path, DiskUsed: m.DiskSpaceUsage()}
+	if includeRaw {
+		stats.Raw = m.String()
+	}
+	return stats, nil
 }
 
 func (s *Store) Put(collection string, key, value []byte, opts WriteOptions) error {

@@ -229,6 +229,11 @@ func TestCLIWriteErrorIsRuntimeError(t *testing.T) {
 	if code != 1 || !strings.Contains(stderr.String(), "boom") {
 		t.Fatalf("write failure with command error stderr=%q code=%d", stderr.String(), code)
 	}
+	var stdout bytes.Buffer
+	code = Main([]string{"--db", db, "apply", "users", "--format", "frame", "--stats"}, strings.NewReader("P 1 1\ncC"), &stdout, errWriter{})
+	if code != 1 || stdout.String() != "" {
+		t.Fatalf("stats write failure out=%q code=%d", stdout.String(), code)
+	}
 }
 
 func TestCLIStreamOutputIsBuffered(t *testing.T) {
@@ -388,6 +393,47 @@ func TestCLIMetadataRawKeysAndValues(t *testing.T) {
 	}
 	if out, err, code := run(t, db, "", "stats"); !strings.Contains(out, "disk_used:") || err != "" || code != 0 {
 		t.Fatalf("stats out=%q err=%q code=%d", out, err, code)
+	}
+}
+
+func TestCLIMetadataNDJSONUsesStableNamesAndOptionalRawStats(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "db")
+	if out, err, code := run(t, db, "", "put", "users", "a", "A"); out != "" || err != "" || code != 0 {
+		t.Fatalf("put out=%q err=%q code=%d", out, err, code)
+	}
+	out, errText, code := run(t, db, "", "info", "--format", "ndjson")
+	if errText != "" || code != 0 {
+		t.Fatalf("info err=%q code=%d", errText, code)
+	}
+	var info map[string]any
+	if err := json.Unmarshal([]byte(out), &info); err != nil {
+		t.Fatal(err)
+	}
+	if info["path"] != db || info["storage_format_version"] != float64(1) || info["collection_count"] != float64(1) || info["created_at"] == "" || len(info) != 4 {
+		t.Fatalf("info = %#v", info)
+	}
+
+	out, errText, code = run(t, db, "", "stats", "--format", "ndjson")
+	if errText != "" || code != 0 {
+		t.Fatalf("stats err=%q code=%d", errText, code)
+	}
+	var stats map[string]any
+	if err := json.Unmarshal([]byte(out), &stats); err != nil {
+		t.Fatal(err)
+	}
+	if stats["path"] != db || stats["disk_used"] == nil || stats["raw"] != nil || len(stats) != 2 {
+		t.Fatalf("stats = %#v", stats)
+	}
+
+	out, errText, code = run(t, db, "", "stats", "--format", "ndjson", "--raw")
+	if errText != "" || code != 0 {
+		t.Fatalf("raw stats err=%q code=%d", errText, code)
+	}
+	if err := json.Unmarshal([]byte(out), &stats); err != nil {
+		t.Fatal(err)
+	}
+	if raw, ok := stats["raw"].(string); !ok || raw == "" {
+		t.Fatalf("raw stats = %#v", stats)
 	}
 }
 

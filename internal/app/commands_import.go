@@ -253,11 +253,13 @@ definitely absent from the collection.`,
 				return err
 			}
 			if stats && !c.quiet {
-				fmt.Fprintf(c.stderr, "pbl: applied records=%d puts=%d deletes=%d", result.records, result.puts, result.deletes)
+				skipped := ""
 				if bloomFilter {
-					fmt.Fprintf(c.stderr, " deletes_skipped=%d", result.deletesSkipped)
+					skipped = fmt.Sprintf(" deletes_skipped=%d", result.deletesSkipped)
 				}
-				fmt.Fprintf(c.stderr, " batches=%d bytes=%d duration=%s\n", result.batches, result.bytes, result.elapsed.Round(time.Millisecond))
+				if _, err := fmt.Fprintf(c.stderr, "pbl: applied records=%d puts=%d deletes=%d%s batches=%d bytes=%d duration=%s\n", result.records, result.puts, result.deletes, skipped, result.batches, result.bytes, result.elapsed.Round(time.Millisecond)); err != nil {
+					return runtimeErr(err)
+				}
 			}
 			return nil
 		},

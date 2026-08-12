@@ -20,6 +20,9 @@ pbl info [--format text|ndjson]
 Shows pbl database metadata: path, storage format version, collection count, and
 creation time when present.
 
+NDJSON fields are `path`, `storage_format_version`, `collection_count`, and
+`created_at`.
+
 Behind the scenes: this reads pbl metadata records from the Pebble directory.
 
 ## stats
@@ -28,7 +31,8 @@ Behind the scenes: this reads pbl metadata records from the Pebble directory.
 pbl stats [--format text|ndjson] [--raw]
 ```
 
-Shows storage metrics. `--raw` appends Pebble's raw metric dump to text output.
+Shows storage metrics. NDJSON uses `path` and `disk_used`. `--raw` appends
+Pebble's raw metric dump to text output or includes it as the NDJSON `raw` field.
 
 Behind the scenes: the small text fields are pbl-owned. Raw Pebble metrics are
 useful for debugging but may change with Pebble releases.
