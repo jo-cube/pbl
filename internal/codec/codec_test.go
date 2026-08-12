@@ -89,6 +89,16 @@ func TestWriteNDJSONValueIncludesKey(t *testing.T) {
 	}
 }
 
+func TestFormatNDJSONValueCompactsToOneLine(t *testing.T) {
+	out, err := FormatNDJSONValue(nil, []byte("{\n  \"name\": \"Ada\"\n}"), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(out), `{"name":"Ada"}`; got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
 func TestReadKcatApplyRecords(t *testing.T) {
 	in := "a\t1\tA\nempty\t0\t\ndead\t-1\t\nmulti\t4\tx\ty\n\n"
 	var got []ApplyRecord

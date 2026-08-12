@@ -21,7 +21,8 @@ Flags:
 - `--include-key`: include `_key` beside `_value` in NDJSON output.
 
 `frame` emits binary-safe put records containing both key and value. It cannot
-be combined with output-shaping flags.
+be combined with output-shaping flags. NDJSON output is validated and normalized
+as needed so each value occupies one line.
 
 Behind the scenes: pbl scans only the selected collection keyspace inside the
 shared Pebble directory.

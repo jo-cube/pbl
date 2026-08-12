@@ -41,9 +41,10 @@ contract, global flags, formats, and exit codes, see [../cli.md](../cli.md).
 key<TAB>value
 ```
 
-`ndjson` is one JSON object per line. Key fields must be strings. Repeated
+`ndjson` input is one JSON object per line. Key fields must be strings. Repeated
 `--key-field` flags build a compound key joined with the one-byte `--key-sep`,
-which defaults to `:`; key parts may not contain the separator.
+which defaults to `:`; key parts may not contain the separator. Output occupies
+one JSON value per line.
 
 `frame` is the binary-safe put/delete format accepted by `apply`. Frame export
 emits puts and can be piped back into `apply` without losing key or value bytes.
