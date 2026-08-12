@@ -62,7 +62,7 @@ is set.`,
 			if err != nil {
 				return err
 			}
-			defer s.Close()
+			defer c.closeStore(s)
 			collection := args[0]
 			if err := s.EnsureCollection(collection); err != nil {
 				return storageErr(err)
@@ -235,7 +235,7 @@ definitely absent from the collection.`,
 			if err != nil {
 				return err
 			}
-			defer s.Close()
+			defer c.closeStore(s)
 			collection := args[0]
 			if err := s.EnsureCollection(collection); err != nil {
 				return storageErr(err)

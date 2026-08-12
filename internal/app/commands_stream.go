@@ -30,7 +30,7 @@ func (c *cli) keysValuesCommand(mode string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer s.Close()
+			defer c.closeStore(s)
 			fn := func(r store.Record) error {
 				if mode == "keys" {
 					return runtimeWrap(codec.WriteLine(c.stdout, r.Key))
@@ -138,7 +138,7 @@ values from each object. Success writes no stdout.`,
 			if err != nil {
 				return err
 			}
-			defer s.Close()
+			defer c.closeStore(s)
 			b := s.NewBatch()
 			defer func() { _ = b.Close() }()
 			flush := func() error {
@@ -268,7 +268,7 @@ func (c *cli) lookupCommand(join bool) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer s.Close()
+			defer c.closeStore(s)
 			return c.forInputRecords(inputFormat, fields, keySep, func(rec codec.Record) error {
 				value, err := s.Get(args[0], rec.Key)
 				if errors.Is(err, store.ErrNotFound) {

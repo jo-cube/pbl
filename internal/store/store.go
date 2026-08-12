@@ -74,7 +74,7 @@ func OpenExisting(path string) (*Store, error) {
 	return nil, fmt.Errorf("%w: %s", pebble.ErrDBDoesNotExist, path)
 }
 
-func open(path string, mustExist bool) (*Store, error) {
+func open(path string, mustExist bool) (_ *Store, err error) {
 	opts := &pebble.Options{Logger: discardLogger{}, ErrorIfNotExists: mustExist}
 	// L0's table filter is inherited by later levels.
 	opts.Levels[0].FilterPolicy = bloom.FilterPolicy(10)
@@ -82,24 +82,25 @@ func open(path string, mustExist bool) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		if err != nil {
+			err = errors.Join(err, db.Close())
+		}
+	}()
 	s := &Store{path: path, db: db}
 	present, err := s.checkMetadata()
 	if err != nil {
-		_ = db.Close()
 		return nil, err
 	}
 	if !present {
 		empty, err := s.empty()
 		if err != nil {
-			_ = db.Close()
 			return nil, err
 		}
 		if !empty {
-			_ = db.Close()
 			return nil, ErrUnmarkedDatabase
 		}
 		if mustExist {
-			_ = db.Close()
 			return nil, ErrUninitialized
 		}
 	}
@@ -123,7 +124,7 @@ func (s *Store) Init() (err error) {
 	if errors.Is(err, pebble.ErrNotFound) {
 		now := time.Now().UTC().Format(time.RFC3339Nano)
 		b := s.db.NewBatch()
-		defer b.Close()
+		defer func() { err = errors.Join(err, b.Close()) }()
 		if err := b.Set(keyenc.MetadataKey("format-version"), []byte(strconv.Itoa(FormatVersion)), nil); err != nil {
 			return err
 		}

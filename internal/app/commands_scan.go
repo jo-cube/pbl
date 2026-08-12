@@ -33,7 +33,7 @@ func (c *cli) scanCommand(mode string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer s.Close()
+			defer c.closeStore(s)
 			fn := func(r store.Record) error {
 				return c.writeScanRecord(r.Key, r.Value, opts.format, opts.keysOnly, opts.valuesOnly, opts.includeKey)
 			}
@@ -70,7 +70,7 @@ Pebble keys.`,
 			if err != nil {
 				return err
 			}
-			defer s.Close()
+			defer c.closeStore(s)
 			names, err := s.ListCollections()
 			if err != nil {
 				return storageErr(err)
@@ -114,7 +114,7 @@ The collection count comes from collection metadata, not by scanning data keys.`
 			if err != nil {
 				return err
 			}
-			defer s.Close()
+			defer c.closeStore(s)
 			info, err := s.Info()
 			if err != nil {
 				return storageErr(err)

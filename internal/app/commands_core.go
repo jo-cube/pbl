@@ -23,7 +23,7 @@ already-initialized compatible database.`,
 			if err != nil {
 				return err
 			}
-			defer s.Close()
+			defer c.closeStore(s)
 			err = s.Init()
 			if errors.Is(err, store.ErrAlreadyInitialized) && ifNotExists {
 				return nil
@@ -73,7 +73,7 @@ use --no-sync only when throughput matters more than crash durability.`,
 			if err != nil {
 				return err
 			}
-			defer s.Close()
+			defer c.closeStore(s)
 			return storageWrap(s.Put(args[0], []byte(args[1]), value, store.WriteOptions{Sync: writeSync(sync, true)}))
 		},
 	}
@@ -105,7 +105,7 @@ can skip them or emit a null-shaped record instead.`,
 			if err != nil {
 				return err
 			}
-			defer s.Close()
+			defer c.closeStore(s)
 			key := []byte(args[1])
 			value, err := s.Get(args[0], key)
 			if errors.Is(err, store.ErrNotFound) {
@@ -143,7 +143,7 @@ Missing keys are success by default so delete is idempotent in scripts. Add
 			if err != nil {
 				return err
 			}
-			defer s.Close()
+			defer c.closeStore(s)
 			if failMissing {
 				found, err := s.Has(args[0], []byte(args[1]))
 				if err != nil {
