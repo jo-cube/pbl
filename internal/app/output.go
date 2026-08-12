@@ -40,10 +40,10 @@ func (c *cli) forInputRecords(inputFormat string, fields []string, sep string, f
 	}
 }
 
-func (c *cli) writeLookup(rec codec.Record, value []byte, inputFormat, asField string) error {
+func (c *cli) writeLookup(rec codec.Record, value []byte, inputFormat, asField string, missing bool) error {
 	if inputFormat == "line" {
-		if value == nil {
-			return nil
+		if missing {
+			value = []byte("null")
 		}
 		return runtimeWrap(codec.WriteLine(c.stdout, value))
 	}
@@ -53,7 +53,7 @@ func (c *cli) writeLookup(rec codec.Record, value []byte, inputFormat, asField s
 			return badInputErr(err)
 		}
 	}
-	if value == nil {
+	if missing {
 		obj[asField] = nil
 	} else {
 		var attached any

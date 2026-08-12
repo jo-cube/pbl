@@ -175,6 +175,20 @@ func TestCLIMissingNullMatchesFormat(t *testing.T) {
 	}
 }
 
+func TestCLILookupDistinguishesEmptyValuesFromMissingKeys(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "db")
+	if out, err, code := run(t, db, "", "put", "users", "empty", "--stdin"); out != "" || err != "" || code != 0 {
+		t.Fatalf("put empty out=%q err=%q code=%d", out, err, code)
+	}
+	if out, err, code := run(t, db, "empty\nmissing\n", "lookup", "users", "--missing", "null"); out != "\nnull\n" || err != "" || code != 0 {
+		t.Fatalf("line lookup out=%q err=%q code=%d", out, err, code)
+	}
+	input := "{\"id\":\"empty\"}\n"
+	if out, err, code := run(t, db, input, "lookup", "users", "--input-format", "ndjson", "--key-field", "id", "--as", "value"); out != "" || !strings.Contains(err, "not valid JSON") || code != 4 {
+		t.Fatalf("ndjson lookup out=%q err=%q code=%d", out, err, code)
+	}
+}
+
 func TestCLIStreamFailureAfterOutputIsPartial(t *testing.T) {
 	db := filepath.Join(t.TempDir(), "db")
 	if out, err, code := run(t, db, "u1\tAda\n", "import", "users", "--format", "kv"); out != "" || err != "" || code != 0 {
@@ -390,6 +404,27 @@ func TestCLIImportExportAndStreams(t *testing.T) {
 	}
 	if out, err, code := run(t, db, existsInput, "exists", "users"); out != existsOutput || err != "" || code != 0 {
 		t.Fatalf("exists out=%q err=%q code=%d", out, err, code)
+	}
+}
+
+func TestCLINDJSONStreamCommandsHonorKeySeparator(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "db")
+	if out, err, code := run(t, db, "left|right\tvalue\n", "import", "users", "--format", "kv"); out != "" || err != "" || code != 0 {
+		t.Fatalf("import out=%q err=%q code=%d", out, err, code)
+	}
+	input := "{\"left\":\"left\",\"right\":\"right\"}\n"
+	keyArgs := []string{"--input-format", "ndjson", "--key-field", "left", "--key-field", "right", "--key-sep", "|"}
+	if out, err, code := run(t, db, input, append([]string{"get-many", "users"}, keyArgs...)...); out != "value\n" || err != "" || code != 0 {
+		t.Fatalf("get-many out=%q err=%q code=%d", out, err, code)
+	}
+	if out, err, code := run(t, db, input, append([]string{"exists", "users"}, keyArgs...)...); out != input || err != "" || code != 0 {
+		t.Fatalf("exists out=%q err=%q code=%d", out, err, code)
+	}
+	if out, err, code := run(t, db, input, append([]string{"del-many", "users"}, keyArgs...)...); out != "" || err != "" || code != 0 {
+		t.Fatalf("del-many out=%q err=%q code=%d", out, err, code)
+	}
+	if out, err, code := run(t, db, "", "scan", "users"); out != "" || err != "" || code != 0 {
+		t.Fatalf("scan out=%q err=%q code=%d", out, err, code)
 	}
 }
 
