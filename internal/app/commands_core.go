@@ -23,7 +23,7 @@ already-initialized compatible database.`,
 			if err != nil {
 				return err
 			}
-			defer s.Close()
+			defer c.closeStore(s)
 			err = s.Init()
 			if errors.Is(err, store.ErrAlreadyInitialized) && ifNotExists {
 				return nil
@@ -48,9 +48,9 @@ stdin bytes as the value, including newlines. Single-key writes sync by default;
 use --no-sync only when throughput matters more than crash durability.`,
 		Args: func(cmd *cobra.Command, args []string) error {
 			if stdinValue {
-				return collectionArgs(2)(cmd, args)
+				return collectionKeyArgs(2)(cmd, args)
 			}
-			return collectionArgs(3)(cmd, args)
+			return collectionKeyArgs(3)(cmd, args)
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := validateSync(sync); err != nil {
@@ -73,7 +73,7 @@ use --no-sync only when throughput matters more than crash durability.`,
 			if err != nil {
 				return err
 			}
-			defer s.Close()
+			defer c.closeStore(s)
 			return storageWrap(s.Put(args[0], []byte(args[1]), value, store.WriteOptions{Sync: writeSync(sync, true)}))
 		},
 	}
@@ -93,7 +93,7 @@ func (c *cli) getCommand() *cobra.Command {
 Default output is the raw value plus a newline. Use --format when downstream
 tools need key/value or NDJSON output. Missing keys exit 2 by default; --missing
 can skip them or emit a null-shaped record instead.`,
-		Args: collectionArgs(2),
+		Args: collectionKeyArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := validateOneOf("format", format, "raw", "kv", "ndjson"); err != nil {
 				return err
@@ -105,7 +105,7 @@ can skip them or emit a null-shaped record instead.`,
 			if err != nil {
 				return err
 			}
-			defer s.Close()
+			defer c.closeStore(s)
 			key := []byte(args[1])
 			value, err := s.Get(args[0], key)
 			if errors.Is(err, store.ErrNotFound) {
@@ -118,7 +118,7 @@ can skip them or emit a null-shaped record instead.`,
 		},
 	}
 	cmd.Flags().StringVar(&format, "format", "raw", "raw|kv|ndjson output")
-	cmd.Flags().BoolVar(&withKey, "with-key", false, "include key in output")
+	cmd.Flags().BoolVar(&withKey, "with-key", false, "include key wrapper in ndjson output")
 	cmd.Flags().StringVar(&missing, "missing", "error", "error|skip|null for missing keys")
 	cmd.Flags().BoolVar(&noNewline, "no-newline", false, "suppress raw output newline")
 	return cmd
@@ -134,7 +134,7 @@ func (c *cli) delCommand() *cobra.Command {
 
 Missing keys are success by default so delete is idempotent in scripts. Add
 --fail-missing when absence should exit 2. Single-key deletes sync by default.`,
-		Args: collectionArgs(2),
+		Args: collectionKeyArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := validateSync(sync); err != nil {
 				return err
@@ -143,7 +143,7 @@ Missing keys are success by default so delete is idempotent in scripts. Add
 			if err != nil {
 				return err
 			}
-			defer s.Close()
+			defer c.closeStore(s)
 			if failMissing {
 				found, err := s.Has(args[0], []byte(args[1]))
 				if err != nil {

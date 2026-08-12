@@ -6,6 +6,7 @@
 pbl get-many <collection>
   [--input-format line|ndjson]
   [--key-field <field>]
+  [--key-sep <sep>]
   [--format raw|kv|ndjson]
   [--with-key]
   [--missing skip|null|error]
@@ -15,7 +16,8 @@ Reads lookup keys from stdin and emits matching values in the same order. Missin
 keys are skipped by default.
 
 NDJSON key fields must be strings. `get-many` joins repeated key fields with
-`:`, and compound key parts may not contain `:`.
+the one-byte `--key-sep`, which defaults to `:`; compound key parts may not
+contain the separator.
 
 Behind the scenes: each input record is looked up independently. If a later
 lookup fails after stdout has already been written, pbl exits with partial
@@ -27,6 +29,7 @@ failure code 6.
 pbl del-many <collection>
   [--input-format line|ndjson]
   [--key-field <field>]
+  [--key-sep <sep>]
   [--batch-size <n>]
   [--batch-bytes <size>]
   [--sync|--no-sync]
@@ -43,6 +46,7 @@ an error.
 pbl exists <collection>
   [--input-format line|ndjson]
   [--key-field <field>]
+  [--key-sep <sep>]
   [--invert]
   [--missing skip|error]
 ```
@@ -70,6 +74,9 @@ pbl lookup <collection>
 
 Looks up stdin records in a collection. Line input emits stored values. NDJSON
 input requires `--as` so pbl knows where to attach the stored value.
+
+For line input, `--missing null` emits the literal line `null`, preserving one
+output record per input key. A present empty value emits an empty line.
 
 Behind the scenes: stored values must be valid JSON when attached to NDJSON
 input. Missing NDJSON lookups emit null by default.

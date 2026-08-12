@@ -2,6 +2,7 @@ package app
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -21,6 +22,9 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	cmd.SetOut(bufferedOut)
 	cmd.SetErr(stderr)
 	err := cmd.Execute()
+	if c.closeErr != nil {
+		err = storageErr(errors.Join(err, c.closeErr))
+	}
 	if flushErr := bufferedOut.Flush(); flushErr != nil {
 		err = runtimeErr(flushErr)
 	}
@@ -51,11 +55,12 @@ func (w *countingWriter) Write(p []byte) (int, error) {
 }
 
 type cli struct {
-	stdin  io.Reader
-	stdout io.Writer
-	stderr io.Writer
-	dbPath string
-	quiet  bool
+	stdin    io.Reader
+	stdout   io.Writer
+	stderr   io.Writer
+	dbPath   string
+	quiet    bool
+	closeErr error
 }
 
 type syncOptions struct {
@@ -140,4 +145,8 @@ func (c *cli) openExisting() (*store.Store, error) {
 		return nil, storageErr(err)
 	}
 	return s, nil
+}
+
+func (c *cli) closeStore(s *store.Store) {
+	c.closeErr = errors.Join(c.closeErr, s.Close())
 }

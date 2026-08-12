@@ -40,16 +40,16 @@ type Record struct {
 }
 
 type Info struct {
-	Path                 string
-	StorageFormatVersion int
-	CollectionCount      int
-	CreatedAt            string
+	Path                 string `json:"path"`
+	StorageFormatVersion int    `json:"storage_format_version"`
+	CollectionCount      int    `json:"collection_count"`
+	CreatedAt            string `json:"created_at"`
 }
 
 type Stats struct {
-	Path     string
-	Raw      string
-	DiskUsed uint64
+	Path     string `json:"path"`
+	DiskUsed uint64 `json:"disk_used"`
+	Raw      string `json:"raw,omitempty"`
 }
 
 type Store struct {
@@ -74,7 +74,7 @@ func OpenExisting(path string) (*Store, error) {
 	return nil, fmt.Errorf("%w: %s", pebble.ErrDBDoesNotExist, path)
 }
 
-func open(path string, mustExist bool) (*Store, error) {
+func open(path string, mustExist bool) (_ *Store, err error) {
 	opts := &pebble.Options{Logger: discardLogger{}, ErrorIfNotExists: mustExist}
 	// L0's table filter is inherited by later levels.
 	opts.Levels[0].FilterPolicy = bloom.FilterPolicy(10)
@@ -82,24 +82,25 @@ func open(path string, mustExist bool) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		if err != nil {
+			err = errors.Join(err, db.Close())
+		}
+	}()
 	s := &Store{path: path, db: db}
 	present, err := s.checkMetadata()
 	if err != nil {
-		_ = db.Close()
 		return nil, err
 	}
 	if !present {
 		empty, err := s.empty()
 		if err != nil {
-			_ = db.Close()
 			return nil, err
 		}
 		if !empty {
-			_ = db.Close()
 			return nil, ErrUnmarkedDatabase
 		}
 		if mustExist {
-			_ = db.Close()
 			return nil, ErrUninitialized
 		}
 	}
@@ -123,7 +124,7 @@ func (s *Store) Init() (err error) {
 	if errors.Is(err, pebble.ErrNotFound) {
 		now := time.Now().UTC().Format(time.RFC3339Nano)
 		b := s.db.NewBatch()
-		defer b.Close()
+		defer func() { err = errors.Join(err, b.Close()) }()
 		if err := b.Set(keyenc.MetadataKey("format-version"), []byte(strconv.Itoa(FormatVersion)), nil); err != nil {
 			return err
 		}
@@ -212,12 +213,16 @@ func (s *Store) Info() (Info, error) {
 	if err != nil && !errors.Is(err, pebble.ErrNotFound) {
 		return Info{}, err
 	}
-	return Info{s.path, version, len(collections), created}, nil
+	return Info{Path: s.path, StorageFormatVersion: version, CollectionCount: len(collections), CreatedAt: created}, nil
 }
 
-func (s *Store) Stats() (Stats, error) {
+func (s *Store) Stats(includeRaw bool) (Stats, error) {
 	m := s.db.Metrics()
-	return Stats{Path: s.path, Raw: m.String(), DiskUsed: m.DiskSpaceUsage()}, nil
+	stats := Stats{Path: s.path, DiskUsed: m.DiskSpaceUsage()}
+	if includeRaw {
+		stats.Raw = m.String()
+	}
+	return stats, nil
 }
 
 func (s *Store) Put(collection string, key, value []byte, opts WriteOptions) error {
@@ -332,6 +337,7 @@ func (s *Store) scan(lower, upper []byte, opts ScanOptions, fn func(Record) erro
 	return iter.Error()
 }
 
+// NewBatch writes data only; callers adding puts must first call EnsureCollection.
 func (s *Store) NewBatch() *Batch {
 	return &Batch{batch: s.db.NewBatch()}
 }

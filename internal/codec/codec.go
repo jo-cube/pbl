@@ -445,7 +445,14 @@ func FormatNDJSONValue(key, value []byte, includeKey bool) ([]byte, error) {
 		if !json.Valid(value) {
 			return nil, fmt.Errorf("value is not valid JSON")
 		}
-		return value, nil
+		if bytes.IndexAny(value, "\r\n") < 0 {
+			return value, nil
+		}
+		var out bytes.Buffer
+		if err := json.Compact(&out, value); err != nil {
+			return nil, fmt.Errorf("value is not valid JSON: %w", err)
+		}
+		return out.Bytes(), nil
 	}
 	var raw any
 	if err := json.Unmarshal(value, &raw); err != nil {

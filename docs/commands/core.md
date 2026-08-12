@@ -52,9 +52,12 @@ Reads one value. Default output is raw value bytes plus a newline.
 Flags:
 
 - `--format`: choose raw value, `key<TAB>value`, or NDJSON output.
-- `--with-key`: include the key in `kv` or `ndjson` output.
+- `--with-key`: wrap NDJSON output with `_key` and `_value`; KV output always
+  includes the key.
 - `--missing`: choose whether missing keys exit 2, emit nothing, or emit null.
 - `--no-newline`: suppress the added newline for raw output.
+
+Point keys must be non-empty.
 
 Behind the scenes: read commands require the database directory to exist. Missing
 null output is shaped to the selected format.

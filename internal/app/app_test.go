@@ -124,6 +124,9 @@ func TestCLIValidatesBeforeCreatingDatabase(t *testing.T) {
 		args []string
 	}{
 		{"collection", []string{"put", "bad/name", "k", "v"}},
+		{"put key", []string{"put", "users", "", "v"}},
+		{"get key", []string{"get", "users", ""}},
+		{"delete key", []string{"del", "users", ""}},
 		{"raw key", []string{"import", "users", "--format", "raw"}},
 		{"ndjson key field", []string{"import", "users", "--format", "ndjson"}},
 		{"compound separator", []string{"import", "users", "--format", "ndjson", "--key-field", "a", "--key-field", "b", "--key-sep", "::"}},
@@ -172,6 +175,20 @@ func TestCLIMissingNullMatchesFormat(t *testing.T) {
 	}
 }
 
+func TestCLILookupDistinguishesEmptyValuesFromMissingKeys(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "db")
+	if out, err, code := run(t, db, "", "put", "users", "empty", "--stdin"); out != "" || err != "" || code != 0 {
+		t.Fatalf("put empty out=%q err=%q code=%d", out, err, code)
+	}
+	if out, err, code := run(t, db, "empty\nmissing\n", "lookup", "users", "--missing", "null"); out != "\nnull\n" || err != "" || code != 0 {
+		t.Fatalf("line lookup out=%q err=%q code=%d", out, err, code)
+	}
+	input := "{\"id\":\"empty\"}\n"
+	if out, err, code := run(t, db, input, "lookup", "users", "--input-format", "ndjson", "--key-field", "id", "--as", "value"); out != "" || !strings.Contains(err, "not valid JSON") || code != 4 {
+		t.Fatalf("ndjson lookup out=%q err=%q code=%d", out, err, code)
+	}
+}
+
 func TestCLIStreamFailureAfterOutputIsPartial(t *testing.T) {
 	db := filepath.Join(t.TempDir(), "db")
 	if out, err, code := run(t, db, "u1\tAda\n", "import", "users", "--format", "kv"); out != "" || err != "" || code != 0 {
@@ -211,6 +228,11 @@ func TestCLIWriteErrorIsRuntimeError(t *testing.T) {
 	code = Main([]string{"--db", db, "get-many", "users", "--missing", "error"}, strings.NewReader("a\nmissing\n"), errWriter{}, &stderr)
 	if code != 1 || !strings.Contains(stderr.String(), "boom") {
 		t.Fatalf("write failure with command error stderr=%q code=%d", stderr.String(), code)
+	}
+	var stdout bytes.Buffer
+	code = Main([]string{"--db", db, "apply", "users", "--format", "frame", "--stats"}, strings.NewReader("P 1 1\ncC"), &stdout, errWriter{})
+	if code != 1 || stdout.String() != "" {
+		t.Fatalf("stats write failure out=%q code=%d", stdout.String(), code)
 	}
 }
 
@@ -374,6 +396,47 @@ func TestCLIMetadataRawKeysAndValues(t *testing.T) {
 	}
 }
 
+func TestCLIMetadataNDJSONUsesStableNamesAndOptionalRawStats(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "db")
+	if out, err, code := run(t, db, "", "put", "users", "a", "A"); out != "" || err != "" || code != 0 {
+		t.Fatalf("put out=%q err=%q code=%d", out, err, code)
+	}
+	out, errText, code := run(t, db, "", "info", "--format", "ndjson")
+	if errText != "" || code != 0 {
+		t.Fatalf("info err=%q code=%d", errText, code)
+	}
+	var info map[string]any
+	if err := json.Unmarshal([]byte(out), &info); err != nil {
+		t.Fatal(err)
+	}
+	if info["path"] != db || info["storage_format_version"] != float64(1) || info["collection_count"] != float64(1) || info["created_at"] == "" || len(info) != 4 {
+		t.Fatalf("info = %#v", info)
+	}
+
+	out, errText, code = run(t, db, "", "stats", "--format", "ndjson")
+	if errText != "" || code != 0 {
+		t.Fatalf("stats err=%q code=%d", errText, code)
+	}
+	var stats map[string]any
+	if err := json.Unmarshal([]byte(out), &stats); err != nil {
+		t.Fatal(err)
+	}
+	if stats["path"] != db || stats["disk_used"] == nil || stats["raw"] != nil || len(stats) != 2 {
+		t.Fatalf("stats = %#v", stats)
+	}
+
+	out, errText, code = run(t, db, "", "stats", "--format", "ndjson", "--raw")
+	if errText != "" || code != 0 {
+		t.Fatalf("raw stats err=%q code=%d", errText, code)
+	}
+	if err := json.Unmarshal([]byte(out), &stats); err != nil {
+		t.Fatal(err)
+	}
+	if raw, ok := stats["raw"].(string); !ok || raw == "" {
+		t.Fatalf("raw stats = %#v", stats)
+	}
+}
+
 func TestCLIImportExportAndStreams(t *testing.T) {
 	db := filepath.Join(t.TempDir(), "db")
 	if out, err, code := run(t, db, usersImport, "import", "users", "--format", "kv"); out != "" || err != "" || code != 0 {
@@ -387,6 +450,27 @@ func TestCLIImportExportAndStreams(t *testing.T) {
 	}
 	if out, err, code := run(t, db, existsInput, "exists", "users"); out != existsOutput || err != "" || code != 0 {
 		t.Fatalf("exists out=%q err=%q code=%d", out, err, code)
+	}
+}
+
+func TestCLINDJSONStreamCommandsHonorKeySeparator(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "db")
+	if out, err, code := run(t, db, "left|right\tvalue\n", "import", "users", "--format", "kv"); out != "" || err != "" || code != 0 {
+		t.Fatalf("import out=%q err=%q code=%d", out, err, code)
+	}
+	input := "{\"left\":\"left\",\"right\":\"right\"}\n"
+	keyArgs := []string{"--input-format", "ndjson", "--key-field", "left", "--key-field", "right", "--key-sep", "|"}
+	if out, err, code := run(t, db, input, append([]string{"get-many", "users"}, keyArgs...)...); out != "value\n" || err != "" || code != 0 {
+		t.Fatalf("get-many out=%q err=%q code=%d", out, err, code)
+	}
+	if out, err, code := run(t, db, input, append([]string{"exists", "users"}, keyArgs...)...); out != input || err != "" || code != 0 {
+		t.Fatalf("exists out=%q err=%q code=%d", out, err, code)
+	}
+	if out, err, code := run(t, db, input, append([]string{"del-many", "users"}, keyArgs...)...); out != "" || err != "" || code != 0 {
+		t.Fatalf("del-many out=%q err=%q code=%d", out, err, code)
+	}
+	if out, err, code := run(t, db, "", "scan", "users"); out != "" || err != "" || code != 0 {
+		t.Fatalf("scan out=%q err=%q code=%d", out, err, code)
 	}
 }
 

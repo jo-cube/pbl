@@ -121,6 +121,18 @@ func collectionArgs(n int) cobra.PositionalArgs {
 	}
 }
 
+func collectionKeyArgs(n int) cobra.PositionalArgs {
+	return func(cmd *cobra.Command, args []string) error {
+		if err := collectionArgs(n)(cmd, args); err != nil {
+			return err
+		}
+		if args[1] == "" {
+			return usagef("key is required")
+		}
+		return nil
+	}
+}
+
 func wantArgs(args []string, n int) error {
 	if len(args) != n {
 		return usagef("expected %d argument(s), got %d", n, len(args))
