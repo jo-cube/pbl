@@ -34,4 +34,4 @@ go.work.sum
 
 # Local agent and graph artifacts
 .codex/
-graphify-out/
+.codegraph/

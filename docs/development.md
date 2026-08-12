@@ -44,22 +44,11 @@ go vet ./...
 go mod tidy -diff
 ```
 
-## Optional Agent Workflow
+## Optional Code Navigation
 
-This repo can use graphify for faster codebase navigation when it is installed.
-Its local skill files and `graphify-out/` outputs are intentionally git-ignored.
-
-In a fresh clone, build the local graph before relying on graph queries:
-
-```sh
-graphify .
-```
-
-After code changes, refresh it with:
-
-```sh
-graphify update .
-```
+When a local `.codegraph/` index is present, `codegraph explore` can navigate
+symbols and call paths before raw source searches. The index is generated,
+git-ignored, and optional; creating it is a developer decision.
 
 ## Local Workflow
 
@@ -84,7 +73,8 @@ make install
 
 ## Functional Tests
 
-The tests in `tests/cli` double as executable examples. They cover:
+The tests in `tests/cli` double as executable examples. They cover the main
+workflows:
 
 - KV import, scan, prefix, and range.
 - Compacted put/delete stream apply.
@@ -92,8 +82,10 @@ The tests in `tests/cli` double as executable examples. They cover:
 - NDJSON import and `join`.
 - Compound key prefix scans.
 - `get-many` and `del-many`.
-- Binary-safe frame export and restore.
-- Initialization, ownership, and partial bulk-write behavior.
+
+Detailed CLI contract tests in `internal/app` cover initialization and
+ownership, exit codes, output failures, duplicate policies, partial bulk writes,
+metadata, and binary-safe frame restore.
 
 Keep these tests readable; they are a reference for future docs.
 
