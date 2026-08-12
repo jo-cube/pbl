@@ -25,6 +25,7 @@ contract, global flags, formats, and exit codes, see [../cli.md](../cli.md).
   `del-many`) do not sync each batch unless `--sync` is set.
 - `--limit 0` means no limit.
 - Input records and values are limited to 64 MiB.
+- User keys passed to point and stream operations must be non-empty.
 - Bulk commands commit incrementally; an error can leave earlier batches stored.
 
 ## Formats

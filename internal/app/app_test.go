@@ -124,6 +124,9 @@ func TestCLIValidatesBeforeCreatingDatabase(t *testing.T) {
 		args []string
 	}{
 		{"collection", []string{"put", "bad/name", "k", "v"}},
+		{"put key", []string{"put", "users", "", "v"}},
+		{"get key", []string{"get", "users", ""}},
+		{"delete key", []string{"del", "users", ""}},
 		{"raw key", []string{"import", "users", "--format", "raw"}},
 		{"ndjson key field", []string{"import", "users", "--format", "ndjson"}},
 		{"compound separator", []string{"import", "users", "--format", "ndjson", "--key-field", "a", "--key-field", "b", "--key-sep", "::"}},
