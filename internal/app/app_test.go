@@ -631,3 +631,34 @@ func kv(rows ...[2]string) string {
 	}
 	return b.String()
 }
+
+func TestCLIJSONLookupPreservesNumbers(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "db")
+	value := "{\n\"n\":9007199254740993,\"huge\":1e400,\"fraction\":1.234567890123456789\n}"
+	if _, err, code := run(t, db, value, "put", "docs", "u1", "--stdin"); err != "" || code != 0 {
+		t.Fatalf("put err=%q code=%d", err, code)
+	}
+	input := "{\"user\":{\"id\":\"u1\"},\"n\":9007199254740993,\"doc\":false}\n"
+	for _, args := range [][]string{
+		{"join", "docs", "--on", "user.id", "--as", "doc"},
+		{"lookup", "docs", "--input-format", "ndjson", "--key-field", "user.id", "--as", "doc"},
+	} {
+		out, err, code := run(t, db, input, args...)
+		if err != "" || code != 0 || strings.Count(out, "\n") != 1 {
+			t.Fatalf("lookup out=%q err=%q code=%d", out, err, code)
+		}
+		var obj map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(out), &obj); err != nil {
+			t.Fatal(err)
+		}
+		if string(obj["n"]) != "9007199254740993" || string(obj["doc"]) != `{"n":9007199254740993,"huge":1e400,"fraction":1.234567890123456789}` {
+			t.Fatalf("lookup changed numbers: %s", out)
+		}
+	}
+	if _, err, code := run(t, db, "not json", "put", "docs", "u1", "--stdin"); err != "" || code != 0 {
+		t.Fatalf("put err=%q code=%d", err, code)
+	}
+	if out, err, code := run(t, db, input, "join", "docs", "--on", "user.id", "--as", "doc"); out != "" || code != 4 || !strings.Contains(err, "not valid JSON") {
+		t.Fatalf("invalid stored JSON out=%q err=%q code=%d", out, err, code)
+	}
+}

@@ -20,7 +20,7 @@ type Record struct {
 	Value []byte
 	Raw   []byte
 	Line  int64
-	JSON  map[string]any
+	JSON  map[string]json.RawMessage
 }
 
 type ApplyRecord struct {
@@ -144,15 +144,9 @@ func ReadNDJSONRecords(r io.Reader, fields []string, sep string, fn func(Record)
 		if err != nil {
 			return err
 		}
-		var obj map[string]any
-		dec := json.NewDecoder(bytes.NewReader(line))
-		dec.UseNumber()
-		if err := dec.Decode(&obj); err != nil {
+		var obj map[string]json.RawMessage
+		if err := json.Unmarshal(line, &obj); err != nil {
 			return fmt.Errorf("line %d: invalid json: %w", n, err)
-		}
-		var extra any
-		if err := dec.Decode(&extra); err != io.EOF {
-			return fmt.Errorf("line %d: invalid json: multiple values", n)
 		}
 		key, err := ExtractKey(obj, fields, sep)
 		if err != nil {
@@ -166,8 +160,11 @@ func ReadNDJSONRecords(r io.Reader, fields []string, sep string, fn func(Record)
 	}
 }
 
+// ApplyRecord slices passed to fn are valid only until fn returns.
 func ReadKcatApplyRecords(r io.Reader, fn func(ApplyRecord) error) error {
 	br := bufio.NewReaderSize(r, 64*1024)
+	// Preserve keys across reader refills without retaining oversized keys.
+	var keyBuf [64 * 1024]byte
 	var line, total int64
 	for {
 		key, n, err := readUntil(br, '\t', MaxRecordBytes)
@@ -185,7 +182,7 @@ func ReadKcatApplyRecords(r io.Reader, fn func(ApplyRecord) error) error {
 		if len(key) == 0 {
 			return fmt.Errorf("record %d: empty key", line)
 		}
-		key = append([]byte(nil), key...)
+		key = append(keyBuf[:0], key...)
 		sizeText, n, err := readUntil(br, '\t', MaxRecordBytes)
 		total += n
 		if errors.Is(err, ErrRecordTooLarge) {
@@ -355,7 +352,7 @@ var (
 	spaceBytes   = []byte{' '}
 )
 
-func ExtractKey(obj map[string]any, fields []string, sep string) (string, error) {
+func ExtractKey(obj map[string]json.RawMessage, fields []string, sep string) (string, error) {
 	if len(fields) == 0 {
 		return "", fmt.Errorf("missing key field")
 	}
@@ -380,26 +377,28 @@ func ExtractKey(obj map[string]any, fields []string, sep string) (string, error)
 	return strings.Join(parts, sep), nil
 }
 
-func LookupField(obj map[string]any, path string) (any, bool) {
-	var cur any = obj
-	for _, part := range strings.Split(path, ".") {
-		m, ok := cur.(map[string]any)
-		if !ok {
+func LookupField(obj map[string]json.RawMessage, path string) (json.RawMessage, bool) {
+	parts := strings.Split(path, ".")
+	for i, part := range parts {
+		value, ok := obj[part]
+		if !ok || i == len(parts)-1 {
+			return value, ok
+		}
+		var nested map[string]json.RawMessage
+		if err := json.Unmarshal(value, &nested); err != nil {
 			return nil, false
 		}
-		cur, ok = m[part]
-		if !ok {
-			return nil, false
-		}
+		obj = nested
 	}
-	return cur, true
+	return nil, false
 }
 
-func CanonicalKey(v any) (string, error) {
-	if s, ok := v.(string); ok {
-		return s, nil
+func CanonicalKey(v json.RawMessage) (string, error) {
+	var s *string
+	if err := json.Unmarshal(v, &s); err != nil || s == nil {
+		return "", fmt.Errorf("key fields must be strings")
 	}
-	return "", fmt.Errorf("key fields must be strings")
+	return *s, nil
 }
 
 func WriteKV(w io.Writer, key, value []byte) error {
@@ -454,13 +453,15 @@ func FormatNDJSONValue(key, value []byte, includeKey bool) ([]byte, error) {
 		}
 		return out.Bytes(), nil
 	}
-	var raw any
-	if err := json.Unmarshal(value, &raw); err != nil {
-		return nil, fmt.Errorf("value is not valid JSON: %w", err)
+	if len(value) == 0 {
+		return nil, fmt.Errorf("value is not valid JSON")
 	}
-	out, err := json.Marshal(map[string]any{"_key": string(key), "_value": raw})
+	out, err := json.Marshal(struct {
+		Key   string          `json:"_key"`
+		Value json.RawMessage `json:"_value"`
+	}{string(key), value})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("value is not valid JSON: %w", err)
 	}
 	return out, nil
 }

@@ -56,11 +56,10 @@ func (c *cli) writeLookup(rec codec.Record, value []byte, inputFormat, asField s
 	if missing {
 		obj[asField] = nil
 	} else {
-		var attached any
-		if err := json.Unmarshal(value, &attached); err != nil {
+		if !json.Valid(value) {
 			return badInputf("stored value for key %q is not valid JSON", rec.Key)
 		}
-		obj[asField] = attached
+		obj[asField] = json.RawMessage(value)
 	}
 	out, err := json.Marshal(obj)
 	if err != nil {
