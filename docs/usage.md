@@ -95,7 +95,9 @@ Missing joins attach `null` by default. Use `--missing skip` for inner-join
 behavior or `--missing error` to fail if a lookup is missing.
 
 Stored values must be valid JSON when they are attached to NDJSON input.
-Fields used as keys must be strings.
+Fields used as keys must be strings. JSON numbers in attached values retain their
+precision, including large IDs such as `9007199254740993`. Use string fields for
+lookup keys even when an ID contains only digits.
 
 ## Compound Ordered Keys
 

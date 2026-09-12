@@ -79,7 +79,9 @@ For line input, `--missing null` emits the literal line `null`, preserving one
 output record per input key. A present empty value emits an empty line.
 
 Behind the scenes: stored values must be valid JSON when attached to NDJSON
-input. Missing NDJSON lookups emit null by default.
+input. Missing NDJSON lookups emit null by default. Stored JSON is attached
+without converting numbers to floating point, including integers larger than
+2^53. Output is one JSON object per line; member order is not guaranteed.
 
 ## join
 
