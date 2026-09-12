@@ -3,6 +3,7 @@ package codec
 import (
 	"bufio"
 	"bytes"
+	"encoding/json"
 	"errors"
 	"strconv"
 	"strings"
@@ -51,7 +52,7 @@ func TestReadUntilEnforcesContentLimit(t *testing.T) {
 }
 
 func TestNDJSONExtractKey(t *testing.T) {
-	obj := map[string]any{"user": map[string]any{"id": "u1"}, "ts": "001"}
+	obj := map[string]json.RawMessage{"user": json.RawMessage(`{"id":"u1"}`), "ts": json.RawMessage(`"001"`)}
 	key, err := ExtractKey(obj, []string{"user.id", "ts"}, ":")
 	if err != nil {
 		t.Fatal(err)
@@ -70,7 +71,7 @@ func TestReadNDJSONRecordsRequiresStringKey(t *testing.T) {
 }
 
 func TestExtractKeyRejectsAmbiguousCompoundKey(t *testing.T) {
-	obj := map[string]any{"left": "a:b", "right": "c"}
+	obj := map[string]json.RawMessage{"left": json.RawMessage(`"a:b"`), "right": json.RawMessage(`"c"`)}
 	if _, err := ExtractKey(obj, []string{"left", "right"}, ":"); err == nil || !strings.Contains(err.Error(), "contains separator") {
 		t.Fatalf("err = %v", err)
 	}
@@ -103,6 +104,7 @@ func TestReadKcatApplyRecords(t *testing.T) {
 	in := "a\t1\tA\nempty\t0\t\ndead\t-1\t\nmulti\t4\tx\ty\n\n"
 	var got []ApplyRecord
 	if err := ReadKcatApplyRecords(strings.NewReader(in), func(rec ApplyRecord) error {
+		rec.Key = bytes.Clone(rec.Key)
 		got = append(got, rec)
 		return nil
 	}); err != nil {
@@ -191,5 +193,88 @@ func TestWriteFramePutRoundTrip(t *testing.T) {
 		return nil
 	}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestNDJSONValidationAndNestedKeys(t *testing.T) {
+	for _, input := range []string{
+		`{"user":{"id":null}}`, `{"user":{"id":12}}`, `{"user":{"id":{}}}`,
+		`{"user":{"id":true}}`, `{"user":{"id":[]}}`,
+		`{"id":"wrong","user":{}}`, `{"user":null}`, `{"user":[]}`, `null`, `[]`,
+		`{"user":{"id":"ok"}} {}`, `{"user":{"id":"ok"},"bad":[1,]}`,
+	} {
+		if err := ReadNDJSONRecords(strings.NewReader(input), []string{"user.id"}, ":", func(Record) error {
+			t.Fatalf("accepted invalid record %s", input)
+			return nil
+		}); err == nil {
+			t.Fatalf("accepted invalid record %s", input)
+		}
+	}
+	input := `{"user":{"id":"first"},"user":{"id":"u\u0031"},"n":1e400}`
+	if err := ReadNDJSONRecords(strings.NewReader(input), []string{"user.id"}, ":", func(rec Record) error {
+		if string(rec.Key) != "u1" || string(rec.Raw) != input || string(rec.Value) != input {
+			t.Fatalf("record = %#v", rec)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestNDJSONOutputPreservesNumbersAndValidatesValues(t *testing.T) {
+	for _, value := range []string{`9007199254740993`, `1e400`, `-0`, `1.234567890123456789`, "{\n\"n\":9007199254740993,\"s\":\"<>&\"\n}"} {
+		out, err := FormatNDJSONValue([]byte("k\"\n"), []byte(value), true)
+		if err != nil || !json.Valid(out) || bytes.ContainsAny(out, "\r\n") {
+			t.Fatalf("FormatNDJSONValue(%q) = %q, %v", value, out, err)
+		}
+		var obj map[string]json.RawMessage
+		if err := json.Unmarshal(out, &obj); err != nil {
+			t.Fatal(err)
+		}
+		var want bytes.Buffer
+		if err := json.Compact(&want, []byte(value)); err != nil {
+			t.Fatal(err)
+		}
+		// Marshal escapes HTML characters but must leave numbers intact.
+		expected := strings.NewReplacer("<", `\u003c`, ">", `\u003e`, "&", `\u0026`).Replace(want.String())
+		if string(obj["_value"]) != expected {
+			t.Fatalf("value = %s, want %s", obj["_value"], expected)
+		}
+	}
+	if _, err := FormatNDJSONValue(nil, nil, true); err == nil {
+		t.Fatal("accepted nil JSON")
+	}
+	for _, value := range []string{"", "null null", "[1,]"} {
+		for _, withKey := range []bool{false, true} {
+			if _, err := FormatNDJSONValue(nil, []byte(value), withKey); err == nil {
+				t.Fatalf("accepted %q", value)
+			}
+		}
+	}
+}
+
+func TestKcatKeysAcrossBufferRefills(t *testing.T) {
+	var input strings.Builder
+	var keys, values []string
+	for i, size := range []int{1, 65535, 65536, 65537, 200000, 3} {
+		key := strings.Repeat(string(rune('a'+i)), size)
+		value := strings.Repeat("v\n\x00", 24000-i)
+		keys = append(keys, key)
+		values = append(values, value)
+		input.WriteString(key + "\t" + strconv.Itoa(len(value)) + "\t" + value + "\n")
+	}
+	count := 0
+	err := ReadKcatApplyRecords(strings.NewReader(input.String()), func(rec ApplyRecord) error {
+		if count >= len(keys) || string(rec.Key) != keys[count] || string(rec.Value) != values[count] || rec.Line != int64(count+1) {
+			t.Fatalf("record %d corrupted across refill", count)
+		}
+		count++
+		if count == len(keys) && rec.Bytes != int64(input.Len()) {
+			t.Fatalf("bytes = %d, want %d", rec.Bytes, input.Len())
+		}
+		return nil
+	})
+	if err != nil || count != len(keys) {
+		t.Fatalf("records = %d, err = %v", count, err)
 	}
 }

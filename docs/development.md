@@ -120,6 +120,27 @@ million keys before measuring absent lookups against the saturated filter.
 These checks are not a full performance harness. They exist to catch obvious
 streaming or batching regressions.
 
+Focused JSON and payload workloads:
+
+```sh
+go test ./tests/perf -run '^$' -bench 'BenchmarkNDJSON|BenchmarkApplyPayload' -benchmem -benchtime=5x -count=3
+```
+
+The JSON benchmark processes 2,500 records through import, join, and keyed
+export, with small objects, nested payloads, and nested lookup keys. The payload
+benchmark applies 5,000 compressible 4 KiB values through Kcat and frame formats.
+Inputs and read-database setup are outside the timer; measured CLI calls include
+database open/close, and writes use fresh databases. Compare allocation counts
+as well as elapsed time: small workloads can be dominated by filesystem costs.
+These warm local benchmarks do not represent cold-disk or incompressible loads.
+
+NDJSON records keep fields as `json.RawMessage`, decoding only key paths into
+objects and strings. Wrapping and joining validate JSON without materializing
+nested values or converting their numbers to floating point. Kcat readers reuse
+64 KiB of key scratch space; larger keys allocate separately so a single large
+key is not retained for the rest of the stream. Kcat callback slices, like other
+streaming views, must be copied if retained after the callback returns.
+
 The CLI buffers stdout once at the application edge. Pebble SSTables use
 10-bit-per-key Bloom filters for point lookups; this is separate from the
 in-memory `apply --bloom-filter`, which skips absent deletes.

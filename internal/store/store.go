@@ -329,7 +329,11 @@ func (s *Store) scan(lower, upper []byte, opts ScanOptions, fn func(Record) erro
 		if !ok {
 			continue
 		}
-		if err := fn(Record{Key: userKey, Value: iter.Value()}); err != nil {
+		value, err := iter.ValueAndErr()
+		if err != nil {
+			return err
+		}
+		if err := fn(Record{Key: userKey, Value: value}); err != nil {
 			return err
 		}
 		n++

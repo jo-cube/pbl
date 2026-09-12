@@ -68,7 +68,9 @@ key<TAB>value
 which defaults to `:`. Compound key parts may not contain that separator.
 Point operations, imports, apply streams, and stream lookups reject empty user
 keys. NDJSON output is normalized as needed to one JSON value per line. Input
-records and values are limited to 64 MiB.
+records and values are limited to 64 MiB. When JSON is wrapped with a key or
+attached by lookup/join, numeric literals retain their precision. Output may
+compact whitespace and escape characters; object member order is not a contract.
 
 `frame` output is a binary-safe sequence accepted by `apply --format frame`.
 Use it when an export must preserve arbitrary key and value bytes.

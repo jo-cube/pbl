@@ -22,7 +22,9 @@ Flags:
 
 `frame` emits binary-safe put records containing both key and value. It cannot
 be combined with output-shaping flags. NDJSON output is validated and normalized
-as needed so each value occupies one line.
+as needed so each value occupies one line. Wrapping a value with `--include-key`
+preserves numeric literals, including large integers; nested objects are not
+reordered into a canonical representation.
 
 Behind the scenes: pbl scans only the selected collection keyspace inside the
 shared Pebble directory.

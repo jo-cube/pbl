@@ -210,3 +210,73 @@ func tombstoneDominatedKcatInput(n int) string {
 
 const tab = '\t'
 const newline = '\n'
+
+func BenchmarkNDJSON(b *testing.B) {
+	for _, shape := range []string{"small", "nested", "nested-key"} {
+		b.Run(shape, func(b *testing.B) {
+			const records = 2500
+			payload := `{"active":true,"score":12.5}`
+			if shape != "small" {
+				payload = `[` + strings.Repeat(`{"name":"Ada","active":true,"score":12.5,"tags":["a","b"]},`, 63) + `null]`
+			}
+			keyField := "id"
+			if shape == "nested-key" {
+				keyField = "meta.id"
+			}
+			var input strings.Builder
+			for i := 0; i < records; i++ {
+				if shape == "nested-key" {
+					fmt.Fprintf(&input, "{\"meta\":{\"id\":\"k%06d\",\"payload\":%s}}\n", i, payload)
+					continue
+				}
+				fmt.Fprintf(&input, "{\"id\":\"k%06d\",\"payload\":%s}\n", i, payload)
+			}
+			data := input.String()
+			for _, command := range []string{"import", "join", "export"} {
+				b.Run(command, func(b *testing.B) {
+					db := filepath.Join(b.TempDir(), "db")
+					if command != "import" {
+						run(b, db, data, "import", "docs", "--format", "ndjson", "--key-field", keyField)
+					}
+					b.ReportAllocs()
+					b.SetBytes(int64(len(data)))
+					b.ResetTimer()
+					for i := 0; i < b.N; i++ {
+						switch command {
+						case "import":
+							run(b, filepath.Join(b.TempDir(), "db"), data, "import", "docs", "--format", "ndjson", "--key-field", keyField)
+						case "join":
+							run(b, db, data, "join", "docs", "--on", keyField, "--as", "doc")
+						case "export":
+							run(b, db, "", "export", "docs", "--format", "ndjson", "--include-key")
+						}
+					}
+				})
+			}
+		})
+	}
+}
+
+func BenchmarkApplyPayload(b *testing.B) {
+	for _, format := range []string{"kcat", "frame"} {
+		b.Run(format, func(b *testing.B) {
+			var input strings.Builder
+			value := strings.Repeat("0123456789abcdef", 256)
+			for i := 0; i < 5000; i++ {
+				key := fmt.Sprintf("k%06d", i)
+				if format == "kcat" {
+					fmt.Fprintf(&input, "%s\t%d\t%s\n", key, len(value), value)
+				} else {
+					fmt.Fprintf(&input, "P %d %d\n%s%s", len(key), len(value), key, value)
+				}
+			}
+			data := input.String()
+			b.ReportAllocs()
+			b.SetBytes(int64(len(data)))
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				run(b, filepath.Join(b.TempDir(), "db"), data, "apply", "kv", "--format", format)
+			}
+		})
+	}
+}
