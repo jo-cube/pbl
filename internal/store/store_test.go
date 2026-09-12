@@ -6,9 +6,12 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/cockroachdb/pebble/v2"
+	"github.com/cockroachdb/pebble/v2/vfs"
+	"github.com/cockroachdb/pebble/v2/vfs/errorfs"
 	"github.com/jo-cube/pbl/internal/keyenc"
 )
 
@@ -249,5 +252,45 @@ func TestReadOperationsValidateCollection(t *testing.T) {
 	}
 	if err := s.ScanKeys("bad/name", func([]byte) error { return nil }); err == nil || !strings.Contains(err.Error(), "invalid collection") {
 		t.Fatalf("ScanKeys invalid collection err = %v", err)
+	}
+}
+
+func TestScanDoesNotEmitFailedValue(t *testing.T) {
+	var failReads atomic.Bool
+	fs := errorfs.Wrap(vfs.NewMem(), errorfs.InjectorFunc(func(op errorfs.Op) error {
+		if failReads.Load() && strings.HasSuffix(op.Path, ".blob") && op.Kind.ReadOrWrite() == errorfs.OpIsRead {
+			return errorfs.ErrInjected
+		}
+		return nil
+	}))
+	opts := &pebble.Options{FS: fs, FormatMajorVersion: pebble.FormatValueSeparation, DisableAutomaticCompactions: true}
+	opts.Experimental.ValueSeparationPolicy = func() pebble.ValueSeparationPolicy {
+		return pebble.ValueSeparationPolicy{Enabled: true, MinimumSize: 1, MaxBlobReferenceDepth: 1}
+	}
+	db, err := pebble.Open("db", opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Store{db: db}
+	t.Cleanup(func() {
+		failReads.Store(false)
+		if err := s.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	if err := s.Put("users", []byte("a"), []byte(strings.Repeat("value", 1000)), WriteOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	failReads.Store(true)
+	called := false
+	err = s.Scan("users", ScanOptions{}, func(Record) error {
+		called = true
+		return nil
+	})
+	if !errors.Is(err, errorfs.ErrInjected) || called {
+		t.Fatalf("scan err = %v, emitted failed value = %v", err, called)
 	}
 }
