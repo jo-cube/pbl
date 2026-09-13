@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -43,8 +44,8 @@ func TestStorePutGetDeleteScan(t *testing.T) {
 		t.Fatalf("scan = %v, want %v", got, want)
 	}
 	got = nil
-	if err := s.ScanKeys("users", func(key []byte) error {
-		got = append(got, string(key))
+	if err := s.Scan("users", ScanOptions{KeysOnly: true}, func(r Record) error {
+		got = append(got, string(r.Key))
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -250,7 +251,7 @@ func TestReadOperationsValidateCollection(t *testing.T) {
 	if err := s.Scan("bad/name", ScanOptions{}, func(Record) error { return nil }); err == nil || !strings.Contains(err.Error(), "invalid collection") {
 		t.Fatalf("Scan invalid collection err = %v", err)
 	}
-	if err := s.ScanKeys("bad/name", func([]byte) error { return nil }); err == nil || !strings.Contains(err.Error(), "invalid collection") {
+	if err := s.Scan("bad/name", ScanOptions{KeysOnly: true}, func(Record) error { return nil }); err == nil || !strings.Contains(err.Error(), "invalid collection") {
 		t.Fatalf("ScanKeys invalid collection err = %v", err)
 	}
 }
@@ -292,5 +293,77 @@ func TestScanDoesNotEmitFailedValue(t *testing.T) {
 	})
 	if !errors.Is(err, errorfs.ErrInjected) || called {
 		t.Fatalf("scan err = %v, emitted failed value = %v", err, called)
+	}
+	for _, reverse := range []bool{false, true} {
+		var keys []string
+		err := s.Scan("users", ScanOptions{KeysOnly: true, Reverse: reverse}, func(r Record) error {
+			if r.Value != nil {
+				t.Fatal("key-only scan fetched a value")
+			}
+			keys = append(keys, string(r.Key))
+			return nil
+		})
+		if err != nil || !slices.Equal(keys, []string{"a"}) {
+			t.Fatalf("key-only scan reverse=%v keys=%v err=%v", reverse, keys, err)
+		}
+	}
+}
+
+func TestScanBinaryBoundsAndDirection(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	keys := []string{"\x00", "a", "a\x00", "a\xff", "b", "\xff", "\xff\x00", "\xff\xff"}
+	for _, collection := range []string{"u", "v", "uu"} {
+		for _, key := range keys {
+			if err := s.Put(collection, []byte(key), []byte(key), WriteOptions{}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	for _, tc := range []struct {
+		opts ScanOptions
+		want []string
+	}{
+		{ScanOptions{}, keys},
+		{ScanOptions{Prefix: []byte("a")}, keys[1:4]},
+		{ScanOptions{Prefix: []byte("\xff")}, keys[5:]},
+		{ScanOptions{Start: []byte("a\x00"), End: []byte("b")}, keys[2:4]},
+		{ScanOptions{Prefix: []byte("a"), Start: []byte("a\x00"), End: []byte("\xff")}, keys[2:4]},
+		{ScanOptions{Start: []byte("\xff\xff")}, keys[7:]},
+		{ScanOptions{End: []byte{}}, nil},
+		{ScanOptions{Prefix: []byte("a"), Start: []byte("b")}, nil},
+		{ScanOptions{Prefix: []byte("\xff"), End: []byte("b")}, nil},
+	} {
+		for _, reverse := range []bool{false, true} {
+			for _, limit := range []int64{0, 1} {
+				opts := tc.opts
+				opts.Reverse, opts.Limit = reverse, limit
+				want := slices.Clone(tc.want)
+				if reverse {
+					slices.Reverse(want)
+				}
+				if limit > 0 && len(want) > int(limit) {
+					want = want[:limit]
+				}
+				var got []string
+				err := s.Scan("u", opts, func(r Record) error {
+					got = append(got, string(r.Key))
+					if string(r.Value) != string(r.Key) {
+						t.Fatalf("wrong value for key %q: %q", r.Key, r.Value)
+					}
+					return nil
+				})
+				if err != nil || !slices.Equal(got, want) {
+					t.Fatalf("scan %+v = %q, %v; want %q", opts, got, err, want)
+				}
+			}
+		}
+	}
+	stop := errors.New("stop")
+	if err := s.Scan("u", ScanOptions{Reverse: true}, func(Record) error { return stop }); !errors.Is(err, stop) {
+		t.Fatalf("callback error = %v", err)
 	}
 }

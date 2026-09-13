@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -30,7 +31,19 @@ type WriteOptions struct {
 }
 
 type ScanOptions struct {
-	Limit int64
+	Prefix, Start, End []byte // Nil Start and End leave that side unbounded.
+	Limit              int64
+	Reverse, KeysOnly  bool
+}
+
+func (o ScanOptions) Validate() error {
+	if o.Limit < 0 {
+		return fmt.Errorf("limit must be greater than or equal to 0")
+	}
+	if o.End != nil && bytes.Compare(o.Start, o.End) > 0 {
+		return fmt.Errorf("start must be less than or equal to end")
+	}
+	return nil
 }
 
 // Record slices passed to scan callbacks are valid only until the callback returns.
@@ -268,75 +281,63 @@ func (s *Store) Delete(collection string, key []byte, opts WriteOptions) error {
 	return s.db.Delete(keyenc.DataKey(collection, key), pebbleWriteOptions(opts))
 }
 
-func (s *Store) Scan(collection string, opts ScanOptions, fn func(Record) error) error {
+// Drop removes a collection's records and metadata in one atomic batch.
+func (s *Store) Drop(collection string, opts WriteOptions) (err error) {
 	if err := ValidateCollection(collection); err != nil {
 		return err
 	}
 	lower, upper := keyenc.CollectionBounds(collection)
-	return s.scan(lower, upper, opts, fn)
+	b := s.db.NewBatch()
+	defer func() { err = errors.Join(err, b.Close()) }()
+	if err := b.DeleteRange(lower, upper, nil); err != nil {
+		return err
+	}
+	if err := b.Delete(keyenc.CollectionMetaKey(collection), nil); err != nil {
+		return err
+	}
+	return b.Commit(pebbleWriteOptions(opts))
 }
 
-// ScanKeys visits keys in order. Each key is valid only until fn returns.
-func (s *Store) ScanKeys(collection string, fn func([]byte) error) (err error) {
+func (s *Store) Scan(collection string, opts ScanOptions, fn func(Record) error) (err error) {
 	if err := ValidateCollection(collection); err != nil {
 		return err
 	}
-	lower, upper := keyenc.CollectionBounds(collection)
+	if err := opts.Validate(); err != nil {
+		return err
+	}
+	lower, upper := keyenc.ScanBounds(collection, opts.Prefix, opts.Start, opts.End)
+	if bytes.Compare(lower, upper) >= 0 {
+		return nil
+	}
 	iter, err := s.db.NewIter(&pebble.IterOptions{LowerBound: lower, UpperBound: upper})
 	if err != nil {
 		return err
 	}
 	defer func() { err = errors.Join(err, iter.Close()) }()
-	for valid := iter.First(); valid; valid = iter.Next() {
-		_, userKey, ok := keyenc.DecodeDataKeyView(iter.Key())
-		if ok {
-			if err := fn(userKey); err != nil {
-				return err
-			}
-		}
+	first, next := iter.First, iter.Next
+	if opts.Reverse {
+		first, next = iter.Last, iter.Prev
 	}
-	return iter.Error()
-}
-
-func (s *Store) Prefix(collection string, prefix []byte, opts ScanOptions, fn func(Record) error) error {
-	if err := ValidateCollection(collection); err != nil {
-		return err
-	}
-	lower, upper := keyenc.PrefixBounds(collection, prefix)
-	return s.scan(lower, upper, opts, fn)
-}
-
-func (s *Store) Range(collection string, start, end []byte, opts ScanOptions, fn func(Record) error) error {
-	if err := ValidateCollection(collection); err != nil {
-		return err
-	}
-	lower, upper := keyenc.RangeBounds(collection, start, end)
-	return s.scan(lower, upper, opts, fn)
-}
-
-func (s *Store) scan(lower, upper []byte, opts ScanOptions, fn func(Record) error) (err error) {
-	iter, err := s.db.NewIter(&pebble.IterOptions{LowerBound: lower, UpperBound: upper})
-	if err != nil {
-		return err
-	}
-	defer func() { err = errors.Join(err, iter.Close()) }()
 	var n int64
-	for valid := iter.First(); valid; valid = iter.Next() {
-		if opts.Limit > 0 && n >= opts.Limit {
-			break
-		}
+	for valid := first(); valid; valid = next() {
 		_, userKey, ok := keyenc.DecodeDataKeyView(iter.Key())
 		if !ok {
 			continue
 		}
-		value, err := iter.ValueAndErr()
-		if err != nil {
-			return err
+		var value []byte
+		if !opts.KeysOnly {
+			value, err = iter.ValueAndErr()
+			if err != nil {
+				return err
+			}
 		}
 		if err := fn(Record{Key: userKey, Value: value}); err != nil {
 			return err
 		}
 		n++
+		if opts.Limit > 0 && n >= opts.Limit {
+			break
+		}
 	}
 	return iter.Error()
 }

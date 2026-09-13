@@ -1,6 +1,9 @@
 package keyenc
 
-import "encoding/binary"
+import (
+	"bytes"
+	"encoding/binary"
+)
 
 const (
 	MetaPrefix byte = 0x00
@@ -62,10 +65,19 @@ func PrefixBounds(collection string, prefix []byte) (lower, upper []byte) {
 	return lower, upper
 }
 
-func RangeBounds(collection string, start, end []byte) (lower, upper []byte) {
-	base := CollectionBase(collection)
-	lower = append(append([]byte(nil), base...), start...)
-	upper = append(append([]byte(nil), base...), end...)
+// ScanBounds intersects a prefix with optional half-open bounds. Nil bounds are open.
+func ScanBounds(collection string, prefix, start, end []byte) (lower, upper []byte) {
+	lower, upper = PrefixBounds(collection, prefix)
+	if start != nil {
+		if bound := DataKey(collection, start); bytes.Compare(bound, lower) > 0 {
+			lower = bound
+		}
+	}
+	if end != nil {
+		if bound := DataKey(collection, end); bytes.Compare(bound, upper) < 0 {
+			upper = bound
+		}
+	}
 	return lower, upper
 }
 
