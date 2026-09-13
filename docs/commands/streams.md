@@ -61,7 +61,7 @@ Flags:
 - `--missing error`: fail on the first missing key instead of filtering it out.
 
 Behind the scenes: `exists` is a membership test against the selected collection;
-it does not read stored values.
+it does not copy stored values into application memory.
 
 ## join
 
