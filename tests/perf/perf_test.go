@@ -51,6 +51,19 @@ func TestPerfVolumeKVImportScanLookup(t *testing.T) {
 	if out.String() != lookupSmokeWant {
 		t.Fatalf("get-many output = %q, want %q", out.String(), lookupSmokeWant)
 	}
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"count", "kv"}, strconv.Itoa(perfRecords) + "\n"},
+		{[]string{"scan", "kv", "--prefix", "k099", "--reverse", "--limit", "2", "--keys-only"}, "k099999\nk099998\n"},
+	} {
+		out.Reset()
+		code := app.Main(append([]string{"--db", db}, tc.args...), strings.NewReader(""), &out, io.Discard)
+		if code != 0 || out.String() != tc.want {
+			t.Fatalf("%v output=%q code=%d", tc.args, out.String(), code)
+		}
+	}
 }
 
 func BenchmarkKVImport(b *testing.B) {
@@ -122,13 +135,21 @@ func BenchmarkApplyTombstoneDominated(b *testing.B) {
 func BenchmarkScan(b *testing.B) {
 	db := filepath.Join(b.TempDir(), "db")
 	run(b, db, kvInput(25_000), "import", "kv", "--format", "kv")
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		code := app.Main([]string{"--db", db, "scan", "kv"}, strings.NewReader(""), io.Discard, io.Discard)
-		if code != 0 {
-			b.Fatalf("scan exit code %d", code)
-		}
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"all", []string{"scan", "kv"}},
+		{"keys", []string{"scan", "kv", "--keys-only"}},
+		{"latest10", []string{"scan", "kv", "--reverse", "--limit", "10"}},
+		{"count", []string{"count", "kv"}},
+	} {
+		b.Run(tc.name, func(b *testing.B) {
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				run(b, db, "", tc.args...)
+			}
+		})
 	}
 }
 
@@ -232,7 +253,7 @@ func BenchmarkNDJSON(b *testing.B) {
 				fmt.Fprintf(&input, "{\"id\":\"k%06d\",\"payload\":%s}\n", i, payload)
 			}
 			data := input.String()
-			for _, command := range []string{"import", "join", "export"} {
+			for _, command := range []string{"import", "join", "scan"} {
 				b.Run(command, func(b *testing.B) {
 					db := filepath.Join(b.TempDir(), "db")
 					if command != "import" {
@@ -247,8 +268,8 @@ func BenchmarkNDJSON(b *testing.B) {
 							run(b, filepath.Join(b.TempDir(), "db"), data, "import", "docs", "--format", "ndjson", "--key-field", keyField)
 						case "join":
 							run(b, db, data, "join", "docs", "--on", keyField, "--as", "doc")
-						case "export":
-							run(b, db, "", "export", "docs", "--format", "ndjson", "--include-key")
+						case "scan":
+							run(b, db, "", "scan", "docs", "--format", "ndjson", "--with-key")
 						}
 					}
 				})
