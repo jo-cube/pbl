@@ -164,7 +164,7 @@ func ReadNDJSONRecords(r io.Reader, fields []string, sep string, fn func(Record)
 func ReadKcatApplyRecords(r io.Reader, fn func(ApplyRecord) error) error {
 	br := bufio.NewReaderSize(r, 64*1024)
 	// Preserve keys across reader refills without retaining oversized keys.
-	var keyBuf [64 * 1024]byte
+	var keyBuf, valueBuf [64 * 1024]byte
 	var line, total int64
 	for {
 		key, n, err := readUntil(br, '\t', MaxRecordBytes)
@@ -200,7 +200,7 @@ func ReadKcatApplyRecords(r io.Reader, fn func(ApplyRecord) error) error {
 		}
 		rec := ApplyRecord{Delete: size == -1, Key: key, Line: line}
 		if size >= 0 {
-			rec.Value = make([]byte, size)
+			rec.Value = sizedBuffer(valueBuf[:], int(size))
 			nn, err := io.ReadFull(br, rec.Value)
 			total += int64(nn)
 			if err != nil {
@@ -226,8 +226,10 @@ func ReadKcatApplyRecords(r io.Reader, fn func(ApplyRecord) error) error {
 	}
 }
 
+// ApplyRecord slices passed to fn are valid only until fn returns.
 func ReadFrameApplyRecords(r io.Reader, fn func(ApplyRecord) error) error {
 	br := bufio.NewReaderSize(r, 64*1024)
+	var bodyBuf [64 * 1024]byte
 	var line, total int64
 	for {
 		header, n, err := readUntil(br, '\n', MaxRecordBytes)
@@ -242,7 +244,7 @@ func ReadFrameApplyRecords(r io.Reader, fn func(ApplyRecord) error) error {
 		if err != nil {
 			return fmt.Errorf("record %d: truncated header", line)
 		}
-		rec, body, err := parseFrameHeader(header, line)
+		rec, body, err := parseFrameHeader(header, line, bodyBuf[:])
 		if err != nil {
 			return err
 		}
@@ -258,7 +260,7 @@ func ReadFrameApplyRecords(r io.Reader, fn func(ApplyRecord) error) error {
 	}
 }
 
-func parseFrameHeader(header []byte, line int64) (ApplyRecord, []byte, error) {
+func parseFrameHeader(header []byte, line int64, scratch []byte) (ApplyRecord, []byte, error) {
 	if len(header) == 0 {
 		return ApplyRecord{}, nil, fmt.Errorf("record %d: empty header", line)
 	}
@@ -279,7 +281,7 @@ func parseFrameHeader(header []byte, line int64) (ApplyRecord, []byte, error) {
 		if keyLen > MaxRecordBytes || valueLen > MaxRecordBytes {
 			return ApplyRecord{}, nil, fmt.Errorf("record %d: %w", line, ErrRecordTooLarge)
 		}
-		body := make([]byte, keyLen+valueLen)
+		body := sizedBuffer(scratch, keyLen+valueLen)
 		return ApplyRecord{Key: body[:keyLen], Value: body[keyLen:], Line: line}, body, nil
 	case 'D':
 		if bytes.Contains(lengths, spaceBytes) {
@@ -292,11 +294,19 @@ func parseFrameHeader(header []byte, line int64) (ApplyRecord, []byte, error) {
 		if keyLen > MaxRecordBytes {
 			return ApplyRecord{}, nil, fmt.Errorf("record %d: %w", line, ErrRecordTooLarge)
 		}
-		key := make([]byte, keyLen)
+		key := sizedBuffer(scratch, keyLen)
 		return ApplyRecord{Delete: true, Key: key, Line: line}, key, nil
 	default:
 		return ApplyRecord{}, nil, fmt.Errorf("record %d: unknown operation", line)
 	}
+}
+
+// Reuse bounded scratch space; an oversized record must not grow the retained buffer.
+func sizedBuffer(scratch []byte, size int) []byte {
+	if size <= len(scratch) {
+		return scratch[:size]
+	}
+	return make([]byte, size)
 }
 
 func parseFrameLengths(keyText, valueText []byte) (int, int, error) {

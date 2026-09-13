@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"testing/iotest"
 )
 
 const tab = "\t"
@@ -106,6 +107,7 @@ func TestReadKcatApplyRecords(t *testing.T) {
 	var got []ApplyRecord
 	if err := ReadKcatApplyRecords(strings.NewReader(in), func(rec ApplyRecord) error {
 		rec.Key = bytes.Clone(rec.Key)
+		rec.Value = bytes.Clone(rec.Value)
 		got = append(got, rec)
 		return nil
 	}); err != nil {
@@ -139,6 +141,8 @@ func TestReadFrameApplyRecords(t *testing.T) {
 	in := "P 2 3\nk\x00v\n\tD 1\nx"
 	var got []ApplyRecord
 	if err := ReadFrameApplyRecords(strings.NewReader(in), func(rec ApplyRecord) error {
+		rec.Key = bytes.Clone(rec.Key)
+		rec.Value = bytes.Clone(rec.Value)
 		got = append(got, rec)
 		return nil
 	}); err != nil {
@@ -302,5 +306,95 @@ func TestMaximumRawValueRoundTripsThroughApplyFormats(t *testing.T) {
 	kcat := io.MultiReader(strings.NewReader("key\t"+strconv.Itoa(len(value))+"\t"), bytes.NewReader(value), strings.NewReader("\n"))
 	if err := ReadKcatApplyRecords(kcat, check); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func BenchmarkApplyReader(b *testing.B) {
+	for _, format := range []string{"kcat", "frame"} {
+		for _, size := range []int{32, 4096, 65536, 262144} {
+			b.Run(format+"/"+strconv.Itoa(size), func(b *testing.B) {
+				const records = 256
+				value := strings.Repeat("x", size)
+				var input strings.Builder
+				for i := 0; i < records; i++ {
+					key := strconv.Itoa(i)
+					if format == "kcat" {
+						input.WriteString(key + "\t" + strconv.Itoa(size) + "\t" + value + "\n")
+					} else {
+						input.WriteString("P " + strconv.Itoa(len(key)) + " " + strconv.Itoa(size) + "\n" + key + value)
+					}
+				}
+				data := input.String()
+				read := ReadKcatApplyRecords
+				if format == "frame" {
+					read = ReadFrameApplyRecords
+				}
+				b.ReportAllocs()
+				b.SetBytes(int64(len(data)))
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					count := 0
+					err := read(strings.NewReader(data), func(rec ApplyRecord) error {
+						if rec.Delete || len(rec.Value) != size {
+							b.Fatal("invalid record")
+						}
+						count++
+						return nil
+					})
+					if err != nil || count != records {
+						b.Fatalf("records=%d err=%v", count, err)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestApplyReadersAcrossBufferRefills(t *testing.T) {
+	for _, format := range []string{"kcat", "frame"} {
+		t.Run(format, func(t *testing.T) {
+			var input strings.Builder
+			var want []ApplyRecord
+			for i, size := range []struct{ key, value int }{
+				{1, 0}, {3, 4096}, {65534, 2}, {65535, 2},
+				{2, 65536}, {2, 65537}, {200000, 3}, {3, 200000}, {1, -1}, {1, 1},
+			} {
+				key := strings.Repeat(string(rune('a'+i)), size.key)
+				value := strings.Repeat("\x00\n\t", (max(size.value, 0)+2)/3)[:max(size.value, 0)]
+				if format == "kcat" {
+					input.WriteString(key + "\t" + strconv.Itoa(size.value) + "\t" + value + "\n")
+				} else if size.value < 0 {
+					input.WriteString("D " + strconv.Itoa(len(key)) + "\n" + key)
+				} else {
+					input.WriteString("P " + strconv.Itoa(len(key)) + " " + strconv.Itoa(len(value)) + "\n" + key + value)
+				}
+				want = append(want, ApplyRecord{Delete: size.value < 0, Key: []byte(key), Value: []byte(value), Line: int64(i + 1), Bytes: int64(input.Len())})
+			}
+			read := ReadKcatApplyRecords
+			if format == "frame" {
+				read = ReadFrameApplyRecords
+			}
+			count := 0
+			err := read(iotest.HalfReader(strings.NewReader(input.String())), func(rec ApplyRecord) error {
+				if count >= len(want) {
+					t.Fatal("unexpected record")
+				}
+				w := want[count]
+				if rec.Delete != w.Delete || !bytes.Equal(rec.Key, w.Key) || !bytes.Equal(rec.Value, w.Value) || rec.Line != w.Line || rec.Bytes != w.Bytes {
+					t.Fatalf("record %d corrupted across refill", count)
+				}
+				count++
+				return nil
+			})
+			if err != nil || count != len(want) {
+				t.Fatalf("records=%d err=%v", count, err)
+			}
+			stop := errors.New("stop")
+			count = 0
+			err = read(strings.NewReader(input.String()), func(ApplyRecord) error { count++; return stop })
+			if !errors.Is(err, stop) || count != 1 {
+				t.Fatalf("callback error: records=%d err=%v", count, err)
+			}
+		})
 	}
 }
