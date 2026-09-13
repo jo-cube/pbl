@@ -143,14 +143,56 @@ These warm local benchmarks do not represent cold-disk or incompressible loads.
 
 NDJSON records keep fields as `json.RawMessage`, decoding only key paths into
 objects and strings. Wrapping and joining validate JSON without materializing
-nested values or converting their numbers to floating point. Kcat readers reuse
-64 KiB of key scratch space; larger keys allocate separately so a single large
-key is not retained for the rest of the stream. Kcat callback slices, like other
-streaming views, must be copied if retained after the callback returns.
+nested values or converting their numbers to floating point. Join validates the
+attached value during JSON encoding, avoiding a separate validation pass; empty
+stored values still fail.
+Kcat readers reuse 64 KiB each for keys and payloads; frame readers reuse 64 KiB
+for the combined key/value body. Larger records allocate separately so a single
+large record is not retained for the rest of the stream. Callback slices from
+both readers must be copied if retained after the callback returns.
 
 The CLI buffers stdout once at the application edge. Pebble SSTables use
 10-bit-per-key Bloom filters for point lookups; this is separate from the
 in-memory `apply --bloom-filter`, which skips absent deletes.
+
+Focused reader and join-output checks isolate CPU and allocations from database
+open/close and filesystem costs:
+
+```sh
+go test ./internal/codec -run '^$' -bench BenchmarkApplyReader -benchmem -benchtime=300ms -count=3
+go test ./internal/app -run '^$' -bench BenchmarkWriteJoin -benchmem -benchtime=300ms -count=3
+```
+
+The reader check covers 256 records per invocation at 32 B, 4 KiB, 64 KiB, and
+256 KiB payload sizes. The join-output check uses small and nested stored JSON.
+
+Measured on Apple M4, macOS arm64, Go 1.26.5 (2026-09-13), relative to `8ce55b0`.
+These are medians of three runs; CLI benchmarks use `-benchtime=5x` and focused
+benchmarks use the commands above. MB below means total allocated bytes divided
+by 1,000,000, not peak resident memory.
+
+| Workload | Before | After |
+| --- | ---: | ---: |
+| Kcat apply, 5,000 x 4 KiB: allocated MB | 65.9 | 45.4 |
+| Frame apply, 5,000 x 4 KiB: allocated MB | 69.5 | 45.2 |
+| Frame apply, 25,000 delete-heavy records: allocations | 26,178 | 1,179 |
+| Kcat reader, 256 x 4 KiB: time / allocations | 135.6 us / 262 | 45.4 us / 7 |
+| Frame reader, 256 x 4 KiB: time / allocations | 135.7 us / 261 | 46.2 us / 6 |
+| CLI nested join, 2,500 records: time | 151.1 ms | 129.1 ms |
+| Nested join output, one record: time | 19.72 us | 11.84 us |
+
+Apply elapsed times varied with filesystem costs; allocation reduction is the
+reliable gain. Each binary reader uses an additional fixed 64 KiB scratch buffer,
+so very short streams can allocate more overall. Payloads beyond the reuse limit
+showed essentially unchanged reader throughput. The cap intentionally avoids
+retaining a maximum-sized record for the rest of an import.
+
+Keep the existing batch lifecycle: Pebble already recycles closed batches, and
+its WAL pipeline governs when their memory can safely be reused. Keep the
+optional delete Bloom filter too: the million-record tombstone benchmark took
+about 87 ms with it versus 457 ms without it before these changes. Stream lookup
+caches, parallel processing, custom JSON parsers, and more Pebble tuning need
+representative workload evidence before adding their state or complexity.
 
 ## Release Packaging
 

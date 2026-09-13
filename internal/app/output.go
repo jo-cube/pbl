@@ -45,14 +45,15 @@ func (c *cli) writeJoin(rec codec.Record, value []byte, asField string, missing 
 	if missing {
 		obj[asField] = nil
 	} else {
-		if !json.Valid(value) {
+		if len(value) == 0 {
 			return badInputf("stored value for key %q is not valid JSON", rec.Key)
 		}
 		obj[asField] = json.RawMessage(value)
 	}
+	// Marshal validates RawMessages while encoding; input fields are already valid.
 	out, err := json.Marshal(obj)
 	if err != nil {
-		return runtimeErr(err)
+		return badInputf("stored value for key %q is not valid JSON", rec.Key)
 	}
 	return runtimeWrap(codec.WriteLine(c.stdout, out))
 }

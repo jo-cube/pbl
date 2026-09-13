@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/jo-cube/pbl/internal/codec"
 )
 
 const valueA = `A
@@ -772,6 +775,39 @@ func TestCLICompoundJoinMissingPolicies(t *testing.T) {
 		}
 		if out != want || code != wantCode || (err != "") != (policy == "error") {
 			t.Fatalf("join %s out=%q err=%q code=%d", policy, out, err, code)
+		}
+	}
+}
+
+func BenchmarkWriteJoin(b *testing.B) {
+	for _, shape := range []string{"small", "nested"} {
+		b.Run(shape, func(b *testing.B) {
+			value := []byte(`{"active":true,"score":12.5}`)
+			if shape == "nested" {
+				value = []byte(`[` + strings.Repeat(`{"name":"Ada","active":true,"score":12.5,"tags":["a","b"]},`, 63) + `null]`)
+			}
+			rec := codec.Record{Key: []byte("u1"), JSON: map[string]json.RawMessage{"id": json.RawMessage(`"u1"`)}}
+			c := &cli{stdout: io.Discard}
+			b.ReportAllocs()
+			b.SetBytes(int64(len(value)))
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				if err := c.writeJoin(rec, value, "doc", false); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+func TestJoinRejectsInvalidStoredJSON(t *testing.T) {
+	for _, value := range [][]byte{nil, {}, []byte(" "), []byte("null null"), []byte("[1,]"), []byte(`{"nested":{"bad":}}`)} {
+		var out bytes.Buffer
+		c := &cli{stdout: &out}
+		rec := codec.Record{Key: []byte("k"), JSON: map[string]json.RawMessage{"id": json.RawMessage(`"k"`)}}
+		err := c.writeJoin(rec, value, "doc", false)
+		if err == nil || exitCode(err) != codeBadInput || err.Error() != `stored value for key "k" is not valid JSON` || out.Len() != 0 {
+			t.Fatalf("value=%q out=%q err=%v", value, out.String(), err)
 		}
 	}
 }
