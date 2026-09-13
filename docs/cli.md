@@ -46,8 +46,9 @@ A non-empty Pebble database without pbl format metadata is rejected.
 
 ## Durability
 
-Single-key writes sync by default. Bulk commands (`import`, `apply`, and
-`del-many`) batch records and do not sync each batch unless `--sync` is set.
+Single-key writes and collection drops sync by default. Bulk commands (`import`,
+`apply`, and `del-many`) batch records and do not sync each batch unless `--sync`
+is set.
 Use `--no-sync` on single-key writes when throughput matters more than crash
 durability.
 
@@ -67,10 +68,11 @@ key<TAB>value
 `--key-field` flags build a compound key joined with the one-byte `--key-sep`,
 which defaults to `:`. Compound key parts may not contain that separator.
 Point operations, imports, apply streams, and stream lookups reject empty user
-keys. NDJSON output is normalized as needed to one JSON value per line. Input
-records and values are limited to 64 MiB. When JSON is wrapped with a key or
-attached by lookup/join, numeric literals retain their precision. Output may
-compact whitespace and escape characters; object member order is not a contract.
+keys. NDJSON output is normalized as needed to one JSON value per line. Text
+input records, raw values, and each key/value in frame or kcat records are limited
+to 64 MiB. When JSON is wrapped with a key or attached by join, numeric literals
+retain their precision. Output may compact whitespace and escape characters;
+object member order is not a contract.
 
 `frame` output is a binary-safe sequence accepted by `apply --format frame`.
 Use it when an export must preserve arbitrary key and value bytes.
@@ -87,6 +89,7 @@ pbl init
 pbl put <collection> <key> <value>
 pbl get <collection> <key>
 pbl del <collection> <key>
+pbl drop <collection>
 ```
 
 See [commands/core.md](commands/core.md).
@@ -94,12 +97,9 @@ See [commands/core.md](commands/core.md).
 Ordered reads:
 
 ```text
-pbl scan <collection>
-pbl prefix <collection> <prefix>
-pbl range <collection> <start> <end>
-pbl keys <collection>
-pbl values <collection>
-pbl export <collection>
+pbl scan <collection> [--prefix <prefix>] [--start <start>] [--end <end>]
+  [--reverse] [--limit <n>] [--format kv|ndjson|raw|frame]
+pbl count <collection> [--prefix <prefix>] [--start <start>] [--end <end>]
 ```
 
 See [commands/ordered-reads.md](commands/ordered-reads.md).
@@ -120,7 +120,6 @@ Stream commands:
 pbl get-many <collection>
 pbl del-many <collection>
 pbl exists <collection>
-pbl lookup <collection>
 pbl join <collection> --on <field> --as <field>
 ```
 

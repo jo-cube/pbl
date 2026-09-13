@@ -101,10 +101,11 @@ The CLI formats are edge formats:
 - `frame`: binary-safe key/value records for lossless export and restore.
 
 NDJSON key fields must be strings. Compound key parts may not contain
-the one-byte `--key-sep`, which defaults to `:`. Input records and values are
-limited to 64 MiB.
+the one-byte `--key-sep`, which defaults to `:`. Text input records, raw values,
+and each key/value in `frame` or `kcat` records are limited to 64 MiB.
 
-Scans are ordered by raw key bytes. `range` is half-open:
+Scans are ordered by raw key bytes, ascending by default. `--reverse` reads
+from the high end of the selected index. Range bounds are half-open:
 
 ```text
 start <= key < end
@@ -121,17 +122,15 @@ pbl init
 pbl put <collection> <key> <value>
 pbl get <collection> <key>
 pbl del <collection> <key>
+pbl drop <collection>
 ```
 
 Ordered reads:
 
 ```text
-pbl scan <collection>
-pbl prefix <collection> <prefix>
-pbl range <collection> <start> <end>
-pbl keys <collection>
-pbl values <collection>
-pbl export <collection> [--format frame]
+pbl scan <collection> [--prefix <prefix>] [--start <start>] [--end <end>]
+  [--reverse] [--limit <n>] [--format kv|ndjson|raw|frame]
+pbl count <collection> [--prefix <prefix>] [--start <start>] [--end <end>]
 ```
 
 Streaming workflows:
@@ -141,7 +140,6 @@ pbl import <collection> --format kv|line|ndjson|raw
 pbl get-many <collection>
 pbl del-many <collection>
 pbl exists <collection>
-pbl lookup <collection>
 pbl join <collection> --on <field> --as <field>
 pbl apply <collection> --format kcat|frame
 ```
