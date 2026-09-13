@@ -47,7 +47,7 @@ intentionally simple and keeps collection bounds self-contained; changing it
 requires a format bump and migration plan.
 
 Ordering inside a collection follows raw user-key byte order. This is what
-makes `scan`, `prefix`, and half-open `range` efficient.
+makes prefix and half-open range selections efficient in either scan direction.
 
 ## Bounds
 
@@ -71,6 +71,10 @@ Range scan:
 lower = collectionBase(collection) + start
 upper = collectionBase(collection) + end
 ```
+
+Omitted range bounds use the corresponding collection bound. A prefix and range
+intersect by taking the larger lower bound and smaller upper bound. Empty
+intersections return no records. Reverse scans use the same bounds.
 
 Range semantics are half-open:
 
@@ -100,5 +104,6 @@ CLI point operations, imports, apply streams, and stream lookups reject empty
 user keys. The physical encoding can represent them, but they are not accepted
 user-facing input in v1.
 
-Collection deletion is not implemented. When it exists, it should delete the
-collection key range and its metadata together.
+`drop` deletes the full collection key range and its metadata record in one
+atomic Pebble batch. It preserves database metadata and other collections. A
+later write may recreate the collection; old records do not reappear.

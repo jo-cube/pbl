@@ -14,93 +14,33 @@ func addSyncFlags(cmd *cobra.Command, opts *syncOptions) {
 	cmd.Flags().BoolVar(&opts.noSync, "no-sync", false, "skip fsync")
 }
 
+func addSelectionFlags(cmd *cobra.Command, opts *selectionOptions) {
+	cmd.Flags().StringVar(&opts.prefix, "prefix", "", "key prefix filter")
+	cmd.Flags().StringVar(&opts.start, "start", "", "inclusive key bound; omitted means no lower bound")
+	cmd.Flags().StringVar(&opts.end, "end", "", "exclusive key bound; omitted means no upper bound")
+}
+
+func (o selectionOptions) scanOptions(cmd *cobra.Command) (store.ScanOptions, error) {
+	opts := store.ScanOptions{Prefix: []byte(o.prefix)}
+	if cmd.Flags().Changed("start") {
+		opts.Start = []byte(o.start)
+	}
+	if cmd.Flags().Changed("end") {
+		opts.End = []byte(o.end)
+	}
+	if err := opts.Validate(); err != nil {
+		return opts, usageErr(err)
+	}
+	return opts, nil
+}
+
 func addScanFlags(cmd *cobra.Command, opts *scanOptions) {
 	cmd.Flags().StringVar(&opts.format, "format", "kv", "kv|ndjson|raw|frame output")
 	cmd.Flags().Int64Var(&opts.limit, "limit", 0, "max records; 0 means all")
-	cmd.Flags().BoolVar(&opts.keysOnly, "keys-only", false, "emit keys only")
-	cmd.Flags().BoolVar(&opts.valuesOnly, "values-only", false, "emit values only")
-	cmd.Flags().BoolVar(&opts.includeKey, "include-key", false, "include _key in ndjson")
-}
-
-func scanShort(mode string) string {
-	switch mode {
-	case "prefix":
-		return "Scan keys with a prefix"
-	case "range":
-		return "Scan a half-open key range"
-	case "export":
-		return "Export collection records"
-	default:
-		return "Scan a collection"
-	}
-}
-
-func scanLong(mode string) string {
-	switch mode {
-	case "prefix":
-		return `Emit records whose keys start with the given prefix.
-
-Records are ordered by raw key bytes. The prefix is matched before formatting,
-and --limit stops after that many matching records.`
-	case "range":
-		return `Emit records in a half-open key range: start <= key < end.
-
-Records are ordered by raw key bytes. Use ranges for compound keys and time
-windows where the end bound should not be included.`
-	case "export":
-		return `Export records from a collection using the same ordered scan path.
-
-Default output is key<TAB>value. Use --values-only --format raw for byte-oriented
-value export, or --format frame for a binary-safe key/value export.`
-	default:
-		return `Emit all records in a collection ordered by raw key bytes.
-
-Default output is key<TAB>value. Use --keys-only, --values-only, --format, and
---limit to shape stdout for the next command in a pipeline.`
-	}
-}
-
-func keysValuesShort(mode string) string {
-	if mode == "keys" {
-		return "Emit collection keys"
-	}
-	return "Emit collection values"
-}
-
-func keysValuesLong(mode string) string {
-	if mode == "keys" {
-		return `Emit collection keys, one per line.
-
-Without filters, keys are ordered by raw key bytes. Use --prefix or a half-open
-range with --range-start and --range-end to narrow the scan.`
-	}
-	return `Emit collection values, one per line.
-
-Values follow raw key-byte order. Use --prefix or a half-open range with
---range-start and --range-end to narrow the scan.`
-}
-
-func lookupShort(join bool) string {
-	if join {
-		return "Join NDJSON stdin with stored values"
-	}
-	return "Lookup stdin keys in a collection"
-}
-
-func lookupLong(join bool) string {
-	if join {
-		return `Attach stored JSON values to NDJSON input records.
-
-Join is the NDJSON-only form of lookup. --on names the input field used as the
-join key, and --as names the field that receives the stored JSON value. Repeated
---key-field flags can add leading compound-key parts. Missing keys attach null
-by default.`
-	}
-	return `Lookup stdin records in a collection.
-
-Line input emits stored values. NDJSON input requires --as so pbl can attach the
-stored JSON value to each input object. Stored values must be valid JSON when
-attached to NDJSON.`
+	cmd.Flags().BoolVar(&opts.reverse, "reverse", false, "scan in descending key order")
+	cmd.Flags().BoolVar(&opts.keysOnly, "keys-only", false, "emit keys only, one per line")
+	cmd.Flags().BoolVar(&opts.valuesOnly, "values-only", false, "emit values only, one per line")
+	cmd.Flags().BoolVar(&opts.withKey, "with-key", false, "include key wrapper in ndjson output")
 }
 
 func exactArgs(n int) cobra.PositionalArgs {
@@ -149,6 +89,16 @@ func validateOneOf(name, value string, allowed ...string) error {
 	return usagef("unknown %s %q", name, value)
 }
 
+func validateOutputFormat(format string, withKey bool, allowed ...string) error {
+	if err := validateOneOf("format", format, allowed...); err != nil {
+		return err
+	}
+	if withKey && format != "ndjson" {
+		return usagef("--with-key requires ndjson format")
+	}
+	return nil
+}
+
 func validateSync(opts syncOptions) error {
 	if opts.sync && opts.noSync {
 		return usagef("--sync and --no-sync cannot both be set")
@@ -171,7 +121,7 @@ func validateLimit(n int64) error {
 }
 
 func validateScanOptions(opts scanOptions) error {
-	if err := validateOneOf("format", opts.format, "kv", "ndjson", "raw", "frame"); err != nil {
+	if err := validateOutputFormat(opts.format, opts.withKey, "kv", "ndjson", "raw", "frame"); err != nil {
 		return err
 	}
 	if err := validateLimit(opts.limit); err != nil {
@@ -180,11 +130,8 @@ func validateScanOptions(opts scanOptions) error {
 	if opts.keysOnly && opts.valuesOnly {
 		return usagef("--keys-only and --values-only cannot both be set")
 	}
-	if opts.format == "raw" && !opts.valuesOnly {
-		return usagef("raw export requires --values-only")
-	}
-	if opts.format == "frame" && (opts.keysOnly || opts.valuesOnly || opts.includeKey) {
-		return usagef("frame export cannot be combined with output-shaping flags")
+	if (opts.keysOnly || opts.valuesOnly) && opts.format != "kv" {
+		return usagef("--keys-only and --values-only require kv format")
 	}
 	return nil
 }

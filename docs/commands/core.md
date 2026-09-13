@@ -52,8 +52,8 @@ Reads one value. Default output is raw value bytes plus a newline.
 Flags:
 
 - `--format`: choose raw value, `key<TAB>value`, or NDJSON output.
-- `--with-key`: wrap NDJSON output with `_key` and `_value`; KV output always
-  includes the key.
+- `--with-key`: wrap NDJSON output with `_key` and `_value`; requires NDJSON
+  format. KV output always includes the key.
 - `--missing`: choose whether missing keys exit 2, emit nothing, or emit null.
 - `--no-newline`: suppress the added newline for raw output.
 
@@ -79,3 +79,20 @@ Flags:
 
 Behind the scenes: `--fail-missing` checks existence before deleting. Without it,
 Pebble deletion is used directly.
+
+## drop
+
+```text
+pbl drop <collection> [--sync|--no-sync]
+```
+
+Deletes every record and the collection metadata. Success writes no stdout.
+An absent collection is success, so repeated drops are idempotent. The database
+must exist. A later put, import, or apply can recreate the collection.
+
+The operation syncs by default. `--no-sync` skips fsync.
+
+Behind the scenes: a single Pebble batch deletes the collection key range and
+its metadata atomically. No per-key scan or delete list is needed. Other
+collections and database metadata are preserved. Pebble compaction reclaims disk
+space later; drop does not force a compaction.

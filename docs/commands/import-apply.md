@@ -10,11 +10,11 @@ pbl import <collection> --format kv|line|ndjson|raw
   [--key-sep <sep>]
   [--batch-size <n>]
   [--batch-bytes <size>]
-  [--replace|--ignore-duplicates|--fail-on-duplicate]
+  [--ignore-duplicates|--fail-on-duplicate]
   [--sync|--no-sync]
 ```
 
-Imports records from stdin.
+Imports records from stdin. Existing values are replaced by default.
 
 Flags:
 
@@ -28,7 +28,6 @@ Flags:
 - `--batch-size`: maximum records per write batch.
 - `--batch-bytes`: approximate bytes per write batch, accepting plain numbers,
   `K`, `KB`, `M`, or `MB`.
-- `--replace`: replace existing values; this is the default.
 - `--ignore-duplicates`: keep the first existing or input value for each key.
 - `--fail-on-duplicate`: exit 4 on existing or repeated input keys.
 - `--sync`: fsync every committed batch.
@@ -51,6 +50,8 @@ pbl apply <collection> --format kcat|frame
 ```
 
 Applies an ordered stream of puts and deletes. Success writes no stdout.
+Keys and values are each limited to 64 MiB, independently, so a maximum-sized
+raw value can be exported and restored with its key.
 
 Flags:
 

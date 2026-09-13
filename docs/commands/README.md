@@ -2,12 +2,10 @@
 
 This directory holds the expanded command reference for `pbl`.
 
-- [Core commands](core.md): `init`, `put`, `get`, `del`
-- [Ordered reads](ordered-reads.md): `scan`, `prefix`, `range`, `keys`,
-  `values`, `export`
+- [Core commands](core.md): `init`, `put`, `get`, `del`, `drop`
+- [Ordered reads](ordered-reads.md): `scan`, `count`
 - [Import and apply](import-apply.md): `import`, `apply`
-- [Stream commands](streams.md): `get-many`, `del-many`, `exists`, `lookup`,
-  `join`
+- [Stream commands](streams.md): `get-many`, `del-many`, `exists`, `join`
 - [Metadata commands](metadata.md): `collections`, `info`, `stats`
 
 For common workflows, see [../usage.md](../usage.md). For the compact CLI
@@ -21,17 +19,19 @@ contract, global flags, formats, and exit codes, see [../cli.md](../cli.md).
 - Stream commands preserve input order.
 - One Pebble directory stores every logical collection.
 - `--db` overrides `PBL_DB`; if neither is set, `.pbl` is used.
-- Single-key writes sync by default. Bulk commands (`import`, `apply`, and
-  `del-many`) do not sync each batch unless `--sync` is set.
+- Single-key writes and collection drops sync by default. Bulk commands
+  (`import`, `apply`, and `del-many`) do not sync each batch unless `--sync` is set.
 - `--limit 0` means no limit.
-- Input records and values are limited to 64 MiB.
+- Text input records, raw values, and each binary-format key/value are limited
+  to 64 MiB.
 - User keys passed to point and stream operations must be non-empty.
 - Bulk commands commit incrementally; an error can leave earlier batches stored.
 
 ## Formats
 
 `raw` is a value without a key wrapper. `get` adds a newline unless
-`--no-newline` is set. `scan --format raw` requires `--values-only`.
+`--no-newline` is set. `scan --format raw` concatenates values without added
+newlines.
 
 `line` is one input record per line.
 

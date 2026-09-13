@@ -13,7 +13,9 @@ pbl get-many <collection>
 ```
 
 Reads lookup keys from stdin and emits matching values in the same order. Missing
-keys are skipped by default.
+keys are skipped by default. With `--missing null`, missing keys emit a null
+record; a present empty value in raw output emits an empty line. `--with-key`
+requires NDJSON output.
 
 NDJSON key fields must be strings. `get-many` joins repeated key fields with
 the one-byte `--key-sep`, which defaults to `:`; compound key parts may not
@@ -61,40 +63,27 @@ Flags:
 Behind the scenes: `exists` is a membership test against the selected collection;
 it does not read stored values.
 
-## lookup
-
-```text
-pbl lookup <collection>
-  [--input-format line|ndjson]
-  [--key-field <field>]
-  [--key-sep <sep>]
-  [--as <field>]
-  [--missing null|skip|error]
-```
-
-Looks up stdin records in a collection. Line input emits stored values. NDJSON
-input requires `--as` so pbl knows where to attach the stored value.
-
-For line input, `--missing null` emits the literal line `null`, preserving one
-output record per input key. A present empty value emits an empty line.
-
-Behind the scenes: stored values must be valid JSON when attached to NDJSON
-input. Missing NDJSON lookups emit null by default. Stored JSON is attached
-without converting numbers to floating point, including integers larger than
-2^53. Output is one JSON object per line; member order is not guaranteed.
-
 ## join
 
 ```text
 pbl join <collection> --on <field> --as <field>
-  [--key-field <field>]
-  [--key-sep <sep>]
+  [--on <field> ...] [--key-sep <sep>]
   [--missing null|skip|error]
 ```
 
-Joins NDJSON input with stored JSON objects. `--on` names the input field used as
-the lookup key, or the final part of a compound key. `--as` names the output
-field receiving the stored JSON value. Use repeated `--key-field` flags for
-leading compound-key parts when the stored collection uses a compound key.
+Attaches stored JSON values to NDJSON input objects, preserving input order.
+`--on` names an input string field; dotted paths address nested fields. Repeat
+`--on` in the same order as import's `--key-field` flags to build compound keys.
+The one-byte `--key-sep` defaults to `:`; compound parts may not contain it.
 
-Behind the scenes: `join` is the NDJSON-only convenience form of `lookup`.
+`--as` names the top-level output field. An existing field with that name is
+replaced. Stored values must be valid JSON, including scalars and null. Numbers
+retain their precision, including integers larger than 2^53. Output is one JSON
+object per line; member order is not guaranteed.
+
+Missing keys attach `null` by default. `--missing skip` omits those input records;
+`--missing error` fails at the first missing key, with exit 2 or exit 6 if output
+has already begun.
+
+Behind the scenes: each input object supplies a key for a point lookup, and the
+stored JSON bytes are attached without decoding their numbers to floating point.

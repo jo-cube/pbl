@@ -40,19 +40,8 @@ func (c *cli) forInputRecords(inputFormat string, fields []string, sep string, f
 	}
 }
 
-func (c *cli) writeLookup(rec codec.Record, value []byte, inputFormat, asField string, missing bool) error {
-	if inputFormat == "line" {
-		if missing {
-			value = []byte("null")
-		}
-		return runtimeWrap(codec.WriteLine(c.stdout, value))
-	}
+func (c *cli) writeJoin(rec codec.Record, value []byte, asField string, missing bool) error {
 	obj := rec.JSON
-	if obj == nil {
-		if err := json.Unmarshal(rec.Raw, &obj); err != nil {
-			return badInputErr(err)
-		}
-	}
 	if missing {
 		obj[asField] = nil
 	} else {
@@ -68,33 +57,17 @@ func (c *cli) writeLookup(rec codec.Record, value []byte, inputFormat, asField s
 	return runtimeWrap(codec.WriteLine(c.stdout, out))
 }
 
-func (c *cli) writeScanRecord(key, value []byte, format string, keysOnly, valuesOnly, includeKey bool) error {
-	if keysOnly {
+func (c *cli) writeScanRecord(key, value []byte, opts scanOptions) error {
+	if opts.keysOnly {
 		return runtimeWrap(codec.WriteLine(c.stdout, key))
 	}
-	if valuesOnly {
-		if format == "raw" {
-			_, err := c.stdout.Write(value)
-			return runtimeWrap(err)
-		}
+	if opts.valuesOnly {
 		return runtimeWrap(codec.WriteLine(c.stdout, value))
 	}
-	switch format {
-	case "kv":
-		return runtimeWrap(codec.WriteKV(c.stdout, key, value))
-	case "ndjson":
-		out, err := codec.FormatNDJSONValue(key, value, includeKey)
-		if err != nil {
-			return badInputErr(err)
-		}
-		return runtimeWrap(codec.WriteLine(c.stdout, out))
-	case "raw":
-		return usagef("raw export requires --values-only")
-	case "frame":
+	if opts.format == "frame" {
 		return runtimeWrap(codec.WriteFramePut(c.stdout, key, value))
-	default:
-		return usagef("unknown format %q", format)
 	}
+	return c.writeRecord(key, value, opts.format, opts.withKey, false)
 }
 
 func (c *cli) writeRecord(key, value []byte, format string, withKey, newline bool) error {

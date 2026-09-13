@@ -30,7 +30,9 @@ keys.
 - Stream stdin/stdout workflows with bounded memory.
 - Batch imports and deletes.
 - Ensure collection metadata before committing batched puts.
-- Use Pebble iterators for ordered reads.
+- Use one bounded Pebble iterator for prefix/range reads, in either direction.
+- Count and key-only scans skip value fetches. Keep counts exact without counters.
+- Drop collection data and metadata atomically using a range deletion.
 - Treat slices passed to streaming callbacks as views; copy only when retaining
   them after the callback returns.
 - Keep values opaque in storage.
@@ -76,16 +78,17 @@ make install
 The tests in `tests/cli` double as executable examples. They cover the main
 workflows:
 
-- KV import, scan, prefix, and range.
+- KV import and scans with prefix/range selection.
 - Compacted put/delete stream apply.
 - Persistent set membership with `exists`.
 - NDJSON import and `join`.
-- Compound key prefix scans.
+- Compound key prefix scans and joins.
 - `get-many` and `del-many`.
 
-Detailed CLI contract tests in `internal/app` cover initialization and
+Contract tests in `internal/app` and `internal/store` cover initialization and
 ownership, exit codes, output failures, duplicate policies, partial bulk writes,
-metadata, and binary-safe frame restore.
+metadata, binary-safe frame restore, bounded scans in both directions, exact
+counts, and collection drop/recreate.
 
 Keep these tests readable; they are a reference for future docs.
 
@@ -105,6 +108,10 @@ Benchmark smoke:
 ```sh
 go test ./tests/perf -run '^$' -bench . -benchtime=1x
 ```
+
+The scan benchmarks compare full records, keys only, the latest ten records, and
+exact counts on 25,000 keys, including CLI database open/close costs. The volume
+check also verifies exact counts and bounded reverse scans on 100,000 records.
 
 Representative tombstone-heavy apply and saturated Bloom lookup benchmarks:
 

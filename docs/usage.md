@@ -116,23 +116,37 @@ cat events.ndjson \
 Scan one user's prefix:
 
 ```sh
-pbl prefix events 'u123:'
+pbl scan events --prefix 'u123:'
 ```
 
 Scan a half-open range:
 
 ```sh
-pbl range events 'u123:2026-01-01' 'u123:2026-02-01'
+pbl scan events --start 'u123:2026-01-01' --end 'u123:2026-02-01'
 ```
 
-Convenience aliases:
+Read the latest ten events for that user without scanning the whole collection:
 
 ```sh
-pbl keys events --prefix 'u123:'
-pbl values events --range-start 'u123:2026-01-01' --range-end 'u123:2026-02-01'
+pbl scan events --prefix 'u123:' --reverse --limit 10 --format ndjson
 ```
 
-`keys` and `values` require both range flags when using a range.
+Prefix and range bounds can be combined. Either range bound may be omitted:
+
+```sh
+pbl scan events --prefix 'u123:' --start 'u123:2026-01-01' --keys-only
+pbl count events --prefix 'u123:' --end 'u123:2026-02-01'
+```
+
+Count visits matching keys without fetching values. It counts records correctly
+regardless of newlines inside keys. Use `--values-only` to emit one value per line,
+or `--format raw` to concatenate values without separators.
+
+For compound joins, repeat `--on` in the same order as the import key fields:
+
+```sh
+cat requests.ndjson | pbl join events --on user_id --on ts --as event
+```
 
 ## Raw Values
 
@@ -145,14 +159,15 @@ pbl get artifacts build.tar --no-newline > build.tar
 
 `raw` import and `put --stdin` read one complete value from stdin.
 
-Input records and raw values are limited to 64 MiB.
+Text input records and raw values are limited to 64 MiB. Frame and kcat keys
+and values each have an independent 64 MiB limit.
 
 ## Lossless Export
 
 Use frame format to preserve arbitrary key and value bytes:
 
 ```sh
-pbl export artifacts --format frame > artifacts.frame
+pbl scan artifacts --format frame > artifacts.frame
 pbl apply artifacts-restored --format frame < artifacts.frame
 ```
 
@@ -190,13 +205,29 @@ D <key-bytes>\n<key>
 `import` and `apply` commit incrementally. If later input is invalid, records in
 earlier committed batches remain stored.
 
+## Collection Cleanup
+
+Remove a collection and all its data:
+
+```sh
+pbl drop scratch
+pbl collections
+```
+
+Drop removes the records and collection metadata atomically, syncs by default,
+and succeeds if the collection is already absent. Other collections stay intact.
+A subsequent write recreates the collection. Disk space is reclaimed during
+Pebble compaction.
+
 ## Useful Commands
 
 ```text
 pbl collections
 pbl info
 pbl stats
-pbl export <collection>
+pbl count <collection>
+pbl scan <collection>
 pbl del <collection> <key>
 pbl del-many <collection>
+pbl drop <collection>
 ```

@@ -95,7 +95,7 @@ tools need key/value or NDJSON output. Missing keys exit 2 by default; --missing
 can skip them or emit a null-shaped record instead.`,
 		Args: collectionKeyArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := validateOneOf("format", format, "raw", "kv", "ndjson"); err != nil {
+			if err := validateOutputFormat(format, withKey, "raw", "kv", "ndjson"); err != nil {
 				return err
 			}
 			if err := validateOneOf("missing", missing, "error", "skip", "null"); err != nil {
@@ -157,6 +157,32 @@ Missing keys are success by default so delete is idempotent in scripts. Add
 		},
 	}
 	cmd.Flags().BoolVar(&failMissing, "fail-missing", false, "exit 2 if missing")
+	addSyncFlags(cmd, &sync)
+	return cmd
+}
+
+func (c *cli) dropCommand() *cobra.Command {
+	var sync syncOptions
+	cmd := &cobra.Command{
+		Use:   "drop <collection>",
+		Short: "Delete a collection and all its records",
+		Long: `Atomically delete all records and metadata for one collection.
+
+An absent collection is success. The database must exist. The operation syncs
+by default and writes no stdout. Disk space is reclaimed by Pebble compaction.`,
+		Args: collectionArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := validateSync(sync); err != nil {
+				return err
+			}
+			s, err := c.openExisting()
+			if err != nil {
+				return err
+			}
+			defer c.closeStore(s)
+			return storageWrap(s.Drop(args[0], store.WriteOptions{Sync: writeSync(sync, true)}))
+		},
+	}
 	addSyncFlags(cmd, &sync)
 	return cmd
 }

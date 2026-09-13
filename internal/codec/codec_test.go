@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"strconv"
 	"strings"
 	"testing"
@@ -174,7 +175,7 @@ func TestApplyReadersRejectOversizedRecords(t *testing.T) {
 	if err := ReadKcatApplyRecords(strings.NewReader(kcat), func(ApplyRecord) error { return nil }); !errors.Is(err, ErrRecordTooLarge) {
 		t.Fatalf("kcat err = %v", err)
 	}
-	frame := "P 1 " + strconv.Itoa(MaxRecordBytes) + "\n"
+	frame := "P 1 " + strconv.Itoa(MaxRecordBytes+1) + "\n"
 	if err := ReadFrameApplyRecords(strings.NewReader(frame), func(ApplyRecord) error { return nil }); !errors.Is(err, ErrRecordTooLarge) {
 		t.Fatalf("frame err = %v", err)
 	}
@@ -276,5 +277,30 @@ func TestKcatKeysAcrossBufferRefills(t *testing.T) {
 	})
 	if err != nil || count != len(keys) {
 		t.Fatalf("records = %d, err = %v", count, err)
+	}
+}
+
+func TestMaximumRawValueRoundTripsThroughApplyFormats(t *testing.T) {
+	value, err := ReadRaw(strings.NewReader(strings.Repeat("x", MaxRecordBytes)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := []byte("key")
+	check := func(rec ApplyRecord) error {
+		if rec.Delete || !bytes.Equal(rec.Key, key) || !bytes.Equal(rec.Value, value) {
+			t.Fatalf("round trip: key=%q value length=%d delete=%v", rec.Key, len(rec.Value), rec.Delete)
+		}
+		return nil
+	}
+	var frame bytes.Buffer
+	if err := WriteFramePut(&frame, key, value); err != nil {
+		t.Fatal(err)
+	}
+	if err := ReadFrameApplyRecords(&frame, check); err != nil {
+		t.Fatal(err)
+	}
+	kcat := io.MultiReader(strings.NewReader("key\t"+strconv.Itoa(len(value))+"\t"), bytes.NewReader(value), strings.NewReader("\n"))
+	if err := ReadKcatApplyRecords(kcat, check); err != nil {
+		t.Fatal(err)
 	}
 }

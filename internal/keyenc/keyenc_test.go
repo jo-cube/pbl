@@ -58,7 +58,7 @@ func TestBounds(t *testing.T) {
 	if !bytes.HasPrefix(pl, base) || bytes.Compare(pu, pl) <= 0 {
 		t.Fatalf("bad prefix bounds")
 	}
-	rl, ru := RangeBounds("users", []byte("b"), []byte("d"))
+	rl, ru := ScanBounds("users", nil, []byte("b"), []byte("d"))
 	if !bytes.Equal(rl, append(append([]byte(nil), base...), 'b')) ||
 		!bytes.Equal(ru, append(append([]byte(nil), base...), 'd')) {
 		t.Fatalf("bad range bounds")

@@ -8,47 +8,72 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func (c *cli) scanCommand(mode string) *cobra.Command {
-	opts := scanOptions{format: "kv"}
-	use := mode + " <collection>"
-	want := 1
-	if mode == "prefix" {
-		use = "prefix <collection> <prefix>"
-		want = 2
-	}
-	if mode == "range" {
-		use = "range <collection> <start> <end>"
-		want = 3
-	}
+func (c *cli) scanCommand() *cobra.Command {
+	var selection selectionOptions
+	var opts scanOptions
 	cmd := &cobra.Command{
-		Use:   use,
-		Short: scanShort(mode),
-		Long:  scanLong(mode),
-		Args:  collectionArgs(want),
+		Use:   "scan <collection>",
+		Short: "Scan collection records in key order",
+		Long: `Emit records ordered by raw key bytes, optionally in reverse.
+
+--prefix, --start (inclusive), and --end (exclusive) select their intersection.
+Omitted range bounds are open. --limit stops after that many matching records.
+Default output is key<TAB>value; --format frame provides lossless export.`,
+		Args: collectionArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := validateScanOptions(opts); err != nil {
 				return err
 			}
+			scanOpts, err := selection.scanOptions(cmd)
+			if err != nil {
+				return err
+			}
+			scanOpts.Limit, scanOpts.Reverse, scanOpts.KeysOnly = opts.limit, opts.reverse, opts.keysOnly
 			s, err := c.openExisting()
 			if err != nil {
 				return err
 			}
 			defer c.closeStore(s)
-			fn := func(r store.Record) error {
-				return c.writeScanRecord(r.Key, r.Value, opts.format, opts.keysOnly, opts.valuesOnly, opts.includeKey)
-			}
-			scanOpts := store.ScanOptions{Limit: opts.limit}
-			switch mode {
-			case "scan", "export":
-				return storageWrap(s.Scan(args[0], scanOpts, fn))
-			case "prefix":
-				return storageWrap(s.Prefix(args[0], []byte(args[1]), scanOpts, fn))
-			default:
-				return storageWrap(s.Range(args[0], []byte(args[1]), []byte(args[2]), scanOpts, fn))
-			}
+			return storageWrap(s.Scan(args[0], scanOpts, func(r store.Record) error {
+				return c.writeScanRecord(r.Key, r.Value, opts)
+			}))
 		},
 	}
+	addSelectionFlags(cmd, &selection)
 	addScanFlags(cmd, &opts)
+	return cmd
+}
+
+func (c *cli) countCommand() *cobra.Command {
+	var selection selectionOptions
+	cmd := &cobra.Command{
+		Use:   "count <collection>",
+		Short: "Count keys in a collection or selection",
+		Long: `Print the exact number of matching keys, followed by a newline.
+
+Uses the same --prefix, --start, and --end selection as scan. Visits matching
+keys without fetching values; an empty or absent collection counts as zero.`,
+		Args: collectionArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			opts, err := selection.scanOptions(cmd)
+			if err != nil {
+				return err
+			}
+			opts.KeysOnly = true
+			s, err := c.openExisting()
+			if err != nil {
+				return err
+			}
+			defer c.closeStore(s)
+			var n int64
+			if err := s.Scan(args[0], opts, func(store.Record) error { n++; return nil }); err != nil {
+				return storageErr(err)
+			}
+			_, err = fmt.Fprintln(c.stdout, n)
+			return runtimeWrap(err)
+		},
+	}
+	addSelectionFlags(cmd, &selection)
 	return cmd
 }
 

@@ -68,12 +68,17 @@ type syncOptions struct {
 	noSync bool
 }
 
+type selectionOptions struct {
+	prefix, start, end string
+}
+
 type scanOptions struct {
 	format     string
 	limit      int64
+	reverse    bool
 	keysOnly   bool
 	valuesOnly bool
-	includeKey bool
+	withKey    bool
 }
 
 func (c *cli) command() *cobra.Command {
@@ -88,7 +93,7 @@ directory. Collections are logical keyspaces inside that one directory.
 
 stdout is data; diagnostics go to stderr. Stream commands preserve input order.
 Write commands that create records initialize the database when needed. Read,
-delete, metadata, and lookup commands require the database directory to exist.`,
+delete, metadata, and stream read commands require the database directory to exist.`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Version:       buildinfo.Version(),
@@ -105,22 +110,18 @@ delete, metadata, and lookup commands require the database directory to exist.`,
 		c.putCommand(),
 		c.getCommand(),
 		c.delCommand(),
-		c.scanCommand("scan"),
-		c.scanCommand("prefix"),
-		c.scanCommand("range"),
+		c.scanCommand(),
+		c.countCommand(),
+		c.dropCommand(),
 		c.collectionsCommand(),
 		c.infoCommand(),
 		c.statsCommand(),
 		c.importCommand(),
 		c.applyCommand(),
-		c.scanCommand("export"),
-		c.keysValuesCommand("keys"),
-		c.keysValuesCommand("values"),
 		c.getManyCommand(),
 		c.delManyCommand(),
 		c.existsCommand(),
-		c.lookupCommand(false),
-		c.lookupCommand(true),
+		c.joinCommand(),
 	)
 	return root
 }
