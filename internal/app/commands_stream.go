@@ -8,52 +8,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func (c *cli) keysValuesCommand(mode string) *cobra.Command {
-	var prefix, start, end string
-	var limit int64
-	cmd := &cobra.Command{
-		Use:   mode + " <collection>",
-		Short: keysValuesShort(mode),
-		Long:  keysValuesLong(mode),
-		Args:  collectionArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := validateLimit(limit); err != nil {
-				return err
-			}
-			if prefix != "" && (start != "" || end != "") {
-				return usagef("--prefix cannot be combined with range flags")
-			}
-			if (start == "") != (end == "") {
-				return usagef("--range-start and --range-end must be used together")
-			}
-			s, err := c.openExisting()
-			if err != nil {
-				return err
-			}
-			defer c.closeStore(s)
-			fn := func(r store.Record) error {
-				if mode == "keys" {
-					return runtimeWrap(codec.WriteLine(c.stdout, r.Key))
-				}
-				return runtimeWrap(codec.WriteLine(c.stdout, r.Value))
-			}
-			opts := store.ScanOptions{Limit: limit}
-			if prefix != "" {
-				return storageWrap(s.Prefix(args[0], []byte(prefix), opts, fn))
-			}
-			if start != "" || end != "" {
-				return storageWrap(s.Range(args[0], []byte(start), []byte(end), opts, fn))
-			}
-			return storageWrap(s.Scan(args[0], opts, fn))
-		},
-	}
-	cmd.Flags().StringVar(&prefix, "prefix", "", "key prefix filter")
-	cmd.Flags().StringVar(&start, "range-start", "", "inclusive range start")
-	cmd.Flags().StringVar(&end, "range-end", "", "exclusive range end")
-	cmd.Flags().Int64Var(&limit, "limit", 0, "max records; 0 means all")
-	return cmd
-}
-
 func (c *cli) getManyCommand() *cobra.Command {
 	var inputFormat, format, missing, keySep string
 	var withKey bool
@@ -70,7 +24,7 @@ values from each object. Missing keys are skipped by default.`,
 			if err := validateOneOf("input-format", inputFormat, "line", "ndjson"); err != nil {
 				return err
 			}
-			if err := validateOneOf("format", format, "raw", "kv", "ndjson"); err != nil {
+			if err := validateOutputFormat(format, withKey, "raw", "kv", "ndjson"); err != nil {
 				return err
 			}
 			if err := validateOneOf("missing", missing, "skip", "null", "error"); err != nil {
@@ -227,44 +181,25 @@ emit missing records instead. --missing error fails on the first missing key.`,
 	return cmd
 }
 
-func (c *cli) lookupCommand(join bool) *cobra.Command {
-	name := "lookup"
-	inputDefault := "line"
-	missingDefault := "skip"
-	if join {
-		name = "join"
-		inputDefault = "ndjson"
-		missingDefault = "null"
-	}
-	use := name + " <collection>"
-	if join {
-		use = "join <collection> --on <field> --as <field>"
-	}
-	var inputFormat, asField, missing, keySep, on string
+func (c *cli) joinCommand() *cobra.Command {
+	var asField, missing, keySep string
 	var fields []string
 	cmd := &cobra.Command{
-		Use:   use,
-		Short: lookupShort(join),
-		Long:  lookupLong(join),
-		Args:  collectionArgs(1),
+		Use:   "join <collection> --on <field> --as <field>",
+		Short: "Join NDJSON stdin with stored JSON values",
+		Long: `Attach stored JSON values to NDJSON input records in input order.
+
+Repeat --on to construct compound keys in the same order as import's --key-field.
+--as names the output field. Missing keys attach null by default.`,
+		Args: collectionArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if join {
-				if on == "" {
-					return usagef("join requires --on")
-				}
-				fields = append(fields, on)
-				inputFormat = "ndjson"
-			}
-			if err := validateOneOf("input-format", inputFormat, "line", "ndjson"); err != nil {
-				return err
+			if len(fields) == 0 || asField == "" {
+				return usagef("join requires --on and --as")
 			}
 			if err := validateOneOf("missing", missing, "null", "skip", "error"); err != nil {
 				return err
 			}
-			if inputFormat == "ndjson" && asField == "" {
-				return usagef("ndjson lookup requires --as")
-			}
-			if err := validateNDJSONKeyFields(inputFormat, fields, keySep); err != nil {
+			if err := validateNDJSONKeyFields("ndjson", fields, keySep); err != nil {
 				return err
 			}
 			s, err := c.openExisting()
@@ -272,7 +207,7 @@ func (c *cli) lookupCommand(join bool) *cobra.Command {
 				return err
 			}
 			defer c.closeStore(s)
-			return c.forInputRecords(inputFormat, fields, keySep, func(rec codec.Record) error {
+			return c.forInputRecords("ndjson", fields, keySep, func(rec codec.Record) error {
 				value, err := s.Get(args[0], rec.Key)
 				if errors.Is(err, store.ErrNotFound) {
 					switch missing {
@@ -281,26 +216,19 @@ func (c *cli) lookupCommand(join bool) *cobra.Command {
 					case "error":
 						return notFoundf("not found: %s", rec.Key)
 					case "null":
-						return c.writeLookup(rec, nil, inputFormat, asField, true)
-					default:
-						return usagef("unknown missing policy %q", missing)
+						return c.writeJoin(rec, nil, asField, true)
 					}
 				}
 				if err != nil {
 					return storageErr(err)
 				}
-				return c.writeLookup(rec, value, inputFormat, asField, false)
+				return c.writeJoin(rec, value, asField, false)
 			})
 		},
 	}
-	cmd.Flags().StringVar(&inputFormat, "input-format", inputDefault, "line|ndjson input")
-	cmd.Flags().StringArrayVar(&fields, "key-field", nil, "lookup string key field; repeat for compound keys")
+	cmd.Flags().StringArrayVar(&fields, "on", nil, "ndjson string key field; repeat for compound keys")
 	cmd.Flags().StringVar(&keySep, "key-sep", ":", "one-byte compound key separator")
-	cmd.Flags().StringVar(&asField, "as", "", "ndjson output field for stored value")
-	cmd.Flags().StringVar(&missing, "missing", missingDefault, "null|skip|error for missing keys")
-	if join {
-		cmd.Flags().StringVar(&on, "on", "", "ndjson input join key field")
-		_ = cmd.Flags().MarkHidden("input-format")
-	}
+	cmd.Flags().StringVar(&asField, "as", "", "output field for stored JSON value")
+	cmd.Flags().StringVar(&missing, "missing", "null", "null|skip|error for missing keys")
 	return cmd
 }

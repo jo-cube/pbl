@@ -15,7 +15,7 @@ func (c *cli) importCommand() *cobra.Command {
 	var fields []string
 	var batchSize int
 	var sync syncOptions
-	var replace, ignoreDup, failDup bool
+	var ignoreDup, failDup bool
 	cmd := &cobra.Command{
 		Use:   "import <collection> --format <format>",
 		Short: "Import records from stdin",
@@ -47,9 +47,6 @@ is set.`,
 			}
 			if format == "raw" && key == "" {
 				return usagef("raw import requires --key")
-			}
-			if replace && (ignoreDup || failDup) {
-				return usagef("--replace cannot be combined with duplicate handling flags")
 			}
 			if ignoreDup && failDup {
 				return usagef("--ignore-duplicates and --fail-on-duplicate cannot both be set")
@@ -110,7 +107,6 @@ is set.`,
 	cmd.Flags().StringArrayVar(&fields, "key-field", nil, "ndjson string key field; repeat for compound keys")
 	cmd.Flags().IntVar(&batchSize, "batch-size", 1000, "max records per batch")
 	cmd.Flags().StringVar(&batchBytesText, "batch-bytes", "4MB", "approx bytes per batch")
-	cmd.Flags().BoolVar(&replace, "replace", false, "replace existing values")
 	cmd.Flags().BoolVar(&ignoreDup, "ignore-duplicates", false, "keep first value for duplicate keys")
 	cmd.Flags().BoolVar(&failDup, "fail-on-duplicate", false, "exit 4 on duplicate keys")
 	addSyncFlags(cmd, &sync)
@@ -241,8 +237,8 @@ definitely absent from the collection.`,
 				return storageErr(err)
 			}
 			if bloomFilter {
-				if err := s.ScanKeys(collection, func(key []byte) error {
-					deleteFilter.Add(key)
+				if err := s.Scan(collection, store.ScanOptions{KeysOnly: true}, func(rec store.Record) error {
+					deleteFilter.Add(rec.Key)
 					return nil
 				}); err != nil {
 					return storageErr(err)

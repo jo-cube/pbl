@@ -180,11 +180,11 @@ func TestCLILookupDistinguishesEmptyValuesFromMissingKeys(t *testing.T) {
 	if out, err, code := run(t, db, "", "put", "users", "empty", "--stdin"); out != "" || err != "" || code != 0 {
 		t.Fatalf("put empty out=%q err=%q code=%d", out, err, code)
 	}
-	if out, err, code := run(t, db, "empty\nmissing\n", "lookup", "users", "--missing", "null"); out != "\nnull\n" || err != "" || code != 0 {
+	if out, err, code := run(t, db, "empty\nmissing\n", "get-many", "users", "--missing", "null"); out != "\nnull\n" || err != "" || code != 0 {
 		t.Fatalf("line lookup out=%q err=%q code=%d", out, err, code)
 	}
 	input := "{\"id\":\"empty\"}\n"
-	if out, err, code := run(t, db, input, "lookup", "users", "--input-format", "ndjson", "--key-field", "id", "--as", "value"); out != "" || !strings.Contains(err, "not valid JSON") || code != 4 {
+	if out, err, code := run(t, db, input, "join", "users", "--on", "id", "--as", "value"); out != "" || !strings.Contains(err, "not valid JSON") || code != 4 {
 		t.Fatalf("ndjson lookup out=%q err=%q code=%d", out, err, code)
 	}
 }
@@ -335,9 +335,18 @@ func TestCLIRejectsInvalidAndConflictingFlags(t *testing.T) {
 	}{
 		{"format", []string{"collections", "--format", "yaml"}},
 		{"sync", []string{"put", "users", "a", "A", "--sync", "--no-sync"}},
-		{"duplicates", []string{"import", "users", "--format", "kv", "--replace", "--ignore-duplicates"}},
-		{"range", []string{"keys", "users", "--range-start", "a"}},
+		{"duplicates", []string{"import", "users", "--format", "kv", "--fail-on-duplicate", "--ignore-duplicates"}},
+		{"range", []string{"scan", "users", "--start", "z", "--end", "a"}},
 		{"frame shaping", []string{"scan", "users", "--format", "frame", "--keys-only"}},
+		{"ndjson shaping", []string{"scan", "users", "--format", "ndjson", "--values-only"}},
+		{"scan key wrapper", []string{"scan", "users", "--with-key"}},
+		{"get key wrapper", []string{"get", "users", "a", "--with-key"}},
+		{"get-many key wrapper", []string{"get-many", "users", "--with-key"}},
+		{"negative limit", []string{"scan", "users", "--limit", "-1"}},
+		{"count range", []string{"count", "users", "--start", "z", "--end", "a"}},
+		{"drop collection", []string{"drop", "bad/name"}},
+		{"drop sync", []string{"drop", "users", "--sync", "--no-sync"}},
+		{"join fields", []string{"join", "users", "--as", "user"}},
 	}
 	for _, tc := range cases {
 		out, err, code := run(t, db, "", tc.args...)
@@ -359,12 +368,14 @@ func TestCLIRejectsEmptyStreamKey(t *testing.T) {
 
 func TestCLIReadRequiresExistingDB(t *testing.T) {
 	db := filepath.Join(t.TempDir(), "missing")
-	out, err, code := run(t, db, "", "get", "users", "a")
-	if out != "" || !strings.Contains(err, "database does not exist") || code != 5 {
-		t.Fatalf("get missing db out=%q err=%q code=%d", out, err, code)
-	}
-	if _, statErr := os.Stat(db); !os.IsNotExist(statErr) {
-		t.Fatalf("read created db: %v", statErr)
+	for _, args := range [][]string{{"get", "users", "a"}, {"scan", "users"}, {"count", "users"}, {"drop", "users"}} {
+		out, err, code := run(t, db, "", args...)
+		if out != "" || !strings.Contains(err, "database does not exist") || code != 5 {
+			t.Fatalf("%v out=%q err=%q code=%d", args, out, err, code)
+		}
+		if _, statErr := os.Stat(db); !os.IsNotExist(statErr) {
+			t.Fatalf("command created db: %v", statErr)
+		}
 	}
 }
 
@@ -382,10 +393,10 @@ func TestCLIMetadataRawKeysAndValues(t *testing.T) {
 	if out, err, code := run(t, db, "", "collections"); out != "blob\nusers\n" || err != "" || code != 0 {
 		t.Fatalf("collections out=%q err=%q code=%d", out, err, code)
 	}
-	if out, err, code := run(t, db, "", "keys", "users", "--range-start", "u1", "--range-end", "u3"); out != "u1\nu2\n" || err != "" || code != 0 {
+	if out, err, code := run(t, db, "", "scan", "users", "--keys-only", "--start", "u1", "--end", "u3"); out != "u1\nu2\n" || err != "" || code != 0 {
 		t.Fatalf("keys out=%q err=%q code=%d", out, err, code)
 	}
-	if out, err, code := run(t, db, "", "values", "users", "--prefix", "u1"); out != "Ada\n" || err != "" || code != 0 {
+	if out, err, code := run(t, db, "", "scan", "users", "--values-only", "--prefix", "u1"); out != "Ada\n" || err != "" || code != 0 {
 		t.Fatalf("values out=%q err=%q code=%d", out, err, code)
 	}
 	if out, err, code := run(t, db, "", "info"); !strings.Contains(out, "storage_format_version: 1\n") || !strings.Contains(out, "collections: 2\n") || err != "" || code != 0 {
@@ -442,7 +453,7 @@ func TestCLIImportExportAndStreams(t *testing.T) {
 	if out, err, code := run(t, db, usersImport, "import", "users", "--format", "kv"); out != "" || err != "" || code != 0 {
 		t.Fatalf("import out=%q err=%q code=%d", out, err, code)
 	}
-	if out, err, code := run(t, db, "", "export", "users", "--format", "kv"); out != usersExport || err != "" || code != 0 {
+	if out, err, code := run(t, db, "", "scan", "users", "--format", "kv"); out != usersExport || err != "" || code != 0 {
 		t.Fatalf("export out=%q err=%q code=%d", out, err, code)
 	}
 	if out, err, code := run(t, db, getManyInput, "get-many", "users"); out != getManyOutput || err != "" || code != 0 {
@@ -535,14 +546,14 @@ func TestCLIFrameExportRoundTrip(t *testing.T) {
 	if out, err, code := run(t, db, frame, "apply", "source", "--format", "frame"); out != "" || err != "" || code != 0 {
 		t.Fatalf("apply source out=%q err=%q code=%d", out, err, code)
 	}
-	out, errText, code := run(t, db, "", "export", "source", "--format", "frame")
+	out, errText, code := run(t, db, "", "scan", "source", "--format", "frame")
 	if out != frame || errText != "" || code != 0 {
 		t.Fatalf("export out=%q err=%q code=%d", out, errText, code)
 	}
 	if out, err, code := run(t, db, out, "apply", "copy", "--format", "frame"); out != "" || err != "" || code != 0 {
 		t.Fatalf("apply copy out=%q err=%q code=%d", out, err, code)
 	}
-	if out, err, code := run(t, db, "", "export", "copy", "--format", "frame"); out != frame || err != "" || code != 0 {
+	if out, err, code := run(t, db, "", "scan", "copy", "--format", "frame"); out != frame || err != "" || code != 0 {
 		t.Fatalf("copy export out=%q err=%q code=%d", out, err, code)
 	}
 }
@@ -632,33 +643,135 @@ func kv(rows ...[2]string) string {
 	return b.String()
 }
 
-func TestCLIJSONLookupPreservesNumbers(t *testing.T) {
+func TestCLIJSONJoinPreservesNumbers(t *testing.T) {
 	db := filepath.Join(t.TempDir(), "db")
 	value := "{\n\"n\":9007199254740993,\"huge\":1e400,\"fraction\":1.234567890123456789\n}"
 	if _, err, code := run(t, db, value, "put", "docs", "u1", "--stdin"); err != "" || code != 0 {
 		t.Fatalf("put err=%q code=%d", err, code)
 	}
 	input := "{\"user\":{\"id\":\"u1\"},\"n\":9007199254740993,\"doc\":false}\n"
-	for _, args := range [][]string{
-		{"join", "docs", "--on", "user.id", "--as", "doc"},
-		{"lookup", "docs", "--input-format", "ndjson", "--key-field", "user.id", "--as", "doc"},
-	} {
-		out, err, code := run(t, db, input, args...)
-		if err != "" || code != 0 || strings.Count(out, "\n") != 1 {
-			t.Fatalf("lookup out=%q err=%q code=%d", out, err, code)
-		}
-		var obj map[string]json.RawMessage
-		if err := json.Unmarshal([]byte(out), &obj); err != nil {
-			t.Fatal(err)
-		}
-		if string(obj["n"]) != "9007199254740993" || string(obj["doc"]) != `{"n":9007199254740993,"huge":1e400,"fraction":1.234567890123456789}` {
-			t.Fatalf("lookup changed numbers: %s", out)
-		}
+	out, err, code := run(t, db, input, "join", "docs", "--on", "user.id", "--as", "doc")
+	if err != "" || code != 0 || strings.Count(out, "\n") != 1 {
+		t.Fatalf("lookup out=%q err=%q code=%d", out, err, code)
+	}
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(out), &obj); err != nil {
+		t.Fatal(err)
+	}
+	if string(obj["n"]) != "9007199254740993" || string(obj["doc"]) != `{"n":9007199254740993,"huge":1e400,"fraction":1.234567890123456789}` {
+		t.Fatalf("lookup changed numbers: %s", out)
 	}
 	if _, err, code := run(t, db, "not json", "put", "docs", "u1", "--stdin"); err != "" || code != 0 {
 		t.Fatalf("put err=%q code=%d", err, code)
 	}
 	if out, err, code := run(t, db, input, "join", "docs", "--on", "user.id", "--as", "doc"); out != "" || code != 4 || !strings.Contains(err, "not valid JSON") {
 		t.Fatalf("invalid stored JSON out=%q err=%q code=%d", out, err, code)
+	}
+}
+
+func TestCLISelectionAndCount(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "db")
+	if _, err, code := run(t, db, "a:1\t1\na:2\t2\na:3\t3\nb:1\t4\n", "import", "events", "--format", "kv"); err != "" || code != 0 {
+		t.Fatalf("import err=%q code=%d", err, code)
+	}
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"scan", "events", "--reverse", "--limit", "2", "--values-only"}, "4\n3\n"},
+		{[]string{"scan", "events", "--prefix", "a:", "--start", "a:2", "--reverse", "--keys-only"}, "a:3\na:2\n"},
+		{[]string{"scan", "events", "--end", "a:2"}, "a:1\t1\n"},
+		{[]string{"scan", "events", "--start", "b:"}, "b:1\t4\n"},
+		{[]string{"scan", "events", "--start", "a:2", "--end", "a:2"}, ""},
+		{[]string{"scan", "events", "--prefix", "b:", "--end", "a:2", "--reverse"}, ""},
+		{[]string{"scan", "events", "--prefix", "a:", "--start", "b:"}, ""},
+		{[]string{"scan", "events", "--end", ""}, ""},
+		{[]string{"scan", "events", "--prefix", "", "--format", "raw"}, "1234"},
+		{[]string{"scan", "events", "--prefix", "a:", "--end", "a:3", "--reverse", "--limit", "1", "--format", "ndjson", "--with-key"}, "{\"_key\":\"a:2\",\"_value\":2}\n"},
+		{[]string{"count", "events"}, "4\n"},
+		{[]string{"count", "events", "--prefix", "a:", "--start", "a:2", "--end", "b:"}, "2\n"},
+		{[]string{"count", "events", "--end", ""}, "0\n"},
+		{[]string{"count", "absent"}, "0\n"},
+	} {
+		out, err, code := run(t, db, "", tc.args...)
+		if out != tc.want || err != "" || code != 0 {
+			t.Fatalf("%v out=%q err=%q code=%d, want %q", tc.args, out, err, code, tc.want)
+		}
+	}
+	if _, err, code := run(t, db, "", "put", "events", "z\nkey", ""); err != "" || code != 0 {
+		t.Fatalf("put binary key err=%q code=%d", err, code)
+	}
+	if out, err, code := run(t, db, "", "count", "events"); out != "5\n" || err != "" || code != 0 {
+		t.Fatalf("count binary key out=%q err=%q code=%d", out, err, code)
+	}
+	var stderr bytes.Buffer
+	if code := Main([]string{"--db", db, "count", "events"}, strings.NewReader(""), errWriter{}, &stderr); code != 1 {
+		t.Fatalf("count output failure code=%d err=%q", code, stderr.String())
+	}
+}
+
+func TestCLIDropAndRecreateCollection(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "db")
+	for _, name := range []string{"users", "userz", "users2"} {
+		if _, err, code := run(t, db, "P 2 1\nk\x00vP 1 0\nx", "apply", name, "--format", "frame"); err != "" || code != 0 {
+			t.Fatalf("seed %s err=%q code=%d", name, err, code)
+		}
+	}
+	for _, name := range []string{"users", "users", "absent"} {
+		if out, err, code := run(t, db, "", "drop", name); out != "" || err != "" || code != 0 {
+			t.Fatalf("drop %s out=%q err=%q code=%d", name, out, err, code)
+		}
+	}
+	if out, err, code := run(t, db, "", "collections"); out != "users2\nuserz\n" || err != "" || code != 0 {
+		t.Fatalf("collections out=%q err=%q code=%d", out, err, code)
+	}
+	if out, err, code := run(t, db, "", "count", "users"); out != "0\n" || err != "" || code != 0 {
+		t.Fatalf("dropped data out=%q err=%q code=%d", out, err, code)
+	}
+	for _, name := range []string{"userz", "users2"} {
+		if out, err, code := run(t, db, "", "count", name); out != "2\n" || err != "" || code != 0 {
+			t.Fatalf("neighbor %s out=%q err=%q code=%d", name, out, err, code)
+		}
+	}
+	if _, err, code := run(t, db, "", "put", "users", "new", "value"); err != "" || code != 0 {
+		t.Fatalf("recreate err=%q code=%d", err, code)
+	}
+	if out, err, code := run(t, db, "", "scan", "users"); out != "new\tvalue\n" || err != "" || code != 0 {
+		t.Fatalf("recreated data out=%q err=%q code=%d", out, err, code)
+	}
+	if out, err, code := run(t, db, "", "collections"); out != "users\nusers2\nuserz\n" || err != "" || code != 0 {
+		t.Fatalf("recreated metadata out=%q err=%q code=%d", out, err, code)
+	}
+	if _, err, code := run(t, db, "", "import", "empty", "--format", "kv"); err != "" || code != 0 {
+		t.Fatalf("empty import err=%q code=%d", err, code)
+	}
+	if _, err, code := run(t, db, "", "drop", "empty"); err != "" || code != 0 {
+		t.Fatalf("empty drop err=%q code=%d", err, code)
+	}
+	if out, err, code := run(t, db, "", "collections"); out != "users\nusers2\nuserz\n" || err != "" || code != 0 {
+		t.Fatalf("empty drop metadata out=%q err=%q code=%d", out, err, code)
+	}
+}
+
+func TestCLICompoundJoinMissingPolicies(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "db")
+	if _, err, code := run(t, db, "{\"org\":\"a\",\"id\":\"b\",\"n\":9007199254740993}\n", "import", "users", "--format", "ndjson", "--key-field", "org", "--key-field", "id", "--key-sep", "|"); err != "" || code != 0 {
+		t.Fatalf("import err=%q code=%d", err, code)
+	}
+	input := "{\"org\":\"a\",\"id\":\"b\"}\n{\"org\":\"a\",\"id\":\"missing\"}\n"
+	found := "{\"id\":\"b\",\"org\":\"a\",\"user\":{\"org\":\"a\",\"id\":\"b\",\"n\":9007199254740993}}\n"
+	for _, policy := range []string{"null", "skip", "error"} {
+		args := []string{"join", "users", "--on", "org", "--on", "id", "--key-sep", "|", "--as", "user", "--missing", policy}
+		out, err, code := run(t, db, input, args...)
+		want, wantCode := found, 0
+		if policy == "null" {
+			want += "{\"id\":\"missing\",\"org\":\"a\",\"user\":null}\n"
+		}
+		if policy == "error" {
+			wantCode = 6
+		}
+		if out != want || code != wantCode || (err != "") != (policy == "error") {
+			t.Fatalf("join %s out=%q err=%q code=%d", policy, out, err, code)
+		}
 	}
 }

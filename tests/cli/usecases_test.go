@@ -130,8 +130,8 @@ func TestUseCaseKVImportScanPrefixRange(t *testing.T) {
 	for _, s := range []step{
 		{name: "import unordered KV", args: []string{"import", "events", "--format", "kv"}, stdin: eventsKV, code: 0},
 		{name: "scan is ordered", args: []string{"scan", "events"}, wantOut: eventsScan, code: 0},
-		{name: "prefix scan", args: []string{"prefix", "events", "u1:"}, wantOut: eventsPrefix, code: 0},
-		{name: "half-open range", args: []string{"range", "events", "u1:2", "u3"}, wantOut: eventsRange, code: 0},
+		{name: "prefix scan", args: []string{"scan", "events", "--prefix", "u1:"}, wantOut: eventsPrefix, code: 0},
+		{name: "half-open range", args: []string{"scan", "events", "--start", "u1:2", "--end", "u3"}, wantOut: eventsRange, code: 0},
 	} {
 		runStep(t, db, s)
 	}
@@ -168,7 +168,7 @@ func TestUseCaseCompoundKeyPrefixScan(t *testing.T) {
 	db := filepath.Join(t.TempDir(), "db")
 	for _, s := range []step{
 		{name: "import compound keys", args: []string{"import", "events", "--format", "ndjson", "--key-field", "user_id", "--key-field", "ts"}, stdin: compoundEventsNDJSON, code: 0},
-		{name: "prefix one user", args: []string{"prefix", "events", "u1:", "--keys-only"}, wantOut: u1CompoundKeys, code: 0},
+		{name: "prefix one user", args: []string{"scan", "events", "--prefix", "u1:", "--keys-only"}, wantOut: u1CompoundKeys, code: 0},
 	} {
 		runStep(t, db, s)
 	}
