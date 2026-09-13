@@ -195,7 +195,7 @@ func ReadKcatApplyRecords(r io.Reader, fn func(ApplyRecord) error) error {
 		if err != nil || size < -1 {
 			return fmt.Errorf("record %d: invalid payload length", line)
 		}
-		if size > MaxRecordBytes || size >= 0 && size > int64(MaxRecordBytes-len(key)) {
+		if size > MaxRecordBytes {
 			return fmt.Errorf("record %d: %w", line, ErrRecordTooLarge)
 		}
 		rec := ApplyRecord{Delete: size == -1, Key: key, Line: line}
@@ -276,7 +276,7 @@ func parseFrameHeader(header []byte, line int64) (ApplyRecord, []byte, error) {
 		if err != nil {
 			return ApplyRecord{}, nil, fmt.Errorf("record %d: %w", line, err)
 		}
-		if keyLen > MaxRecordBytes || valueLen > MaxRecordBytes-keyLen {
+		if keyLen > MaxRecordBytes || valueLen > MaxRecordBytes {
 			return ApplyRecord{}, nil, fmt.Errorf("record %d: %w", line, ErrRecordTooLarge)
 		}
 		body := make([]byte, keyLen+valueLen)
@@ -420,7 +420,7 @@ func WriteLine(w io.Writer, value []byte) error {
 }
 
 func WriteFramePut(w io.Writer, key, value []byte) error {
-	if len(key) > MaxRecordBytes || len(value) > MaxRecordBytes-len(key) {
+	if len(key) > MaxRecordBytes || len(value) > MaxRecordBytes {
 		return ErrRecordTooLarge
 	}
 	var buf [64]byte
