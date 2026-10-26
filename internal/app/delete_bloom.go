@@ -3,62 +3,55 @@ package app
 import (
 	"fmt"
 	"hash/maphash"
+	"math/bits"
 )
 
 const (
-	deleteBloomBitsPerKey = 10
-	deleteBloomProbes     = 7
+	deleteBloomBitsPerKey = 11
+	deleteBloomProbes     = 6
 )
 
 type deleteBloom struct {
-	bits     []uint64
-	bitCount uint64
-	seed1    maphash.Seed
-	seed2    maphash.Seed
+	bits []uint64
+	seed maphash.Seed
 }
 
 func newDeleteBloom(expectedKeys uint64) (*deleteBloom, error) {
-	maxUint64 := ^uint64(0)
-	if expectedKeys == 0 || expectedKeys > (maxUint64-63)/deleteBloomBitsPerKey {
+	if expectedKeys == 0 || expectedKeys > (^uint64(0)-511)/deleteBloomBitsPerKey {
 		return nil, fmt.Errorf("invalid expected key count")
 	}
-	bitCount := expectedKeys * deleteBloomBitsPerKey
-	words := (bitCount + 63) / 64
-	if words > uint64(^uint(0)>>1)/8 {
+	blocks := (expectedKeys*deleteBloomBitsPerKey + 511) / 512
+	if blocks > uint64(^uint(0)>>1)/64 {
 		return nil, fmt.Errorf("expected key count is too large")
 	}
-	return &deleteBloom{
-		bits:     make([]uint64, int(words)),
-		bitCount: words * 64,
-		seed1:    maphash.MakeSeed(),
-		seed2:    maphash.MakeSeed(),
-	}, nil
+	return &deleteBloom{bits: make([]uint64, int(blocks)*8), seed: maphash.MakeSeed()}, nil
 }
 
 func (b *deleteBloom) Add(key []byte) {
-	h, step := b.hashes(key)
-	for i := uint64(0); i < deleteBloomProbes; i++ {
-		bit := (h + i*step) % b.bitCount
-		b.bits[bit>>6] |= uint64(1) << (bit & 63)
+	block, h := b.block(key)
+	for i := 0; i < deleteBloomProbes; i++ {
+		bit := h >> 23
+		block[bit>>6] |= uint64(1) << (bit & 63)
+		h *= 0x9e3779b9
 	}
 }
 
 func (b *deleteBloom) MayContain(key []byte) bool {
-	h, step := b.hashes(key)
-	for i := uint64(0); i < deleteBloomProbes; i++ {
-		bit := (h + i*step) % b.bitCount
-		if b.bits[bit>>6]&(uint64(1)<<(bit&63)) == 0 {
-			return false
-		}
+	block, h := b.block(key)
+	// Starting at one keeps match in bit zero; any missing probe clears it.
+	match := uint64(1)
+	for i := 0; i < deleteBloomProbes; i++ {
+		bit := h >> 23
+		match &= block[bit>>6] >> (bit & 63)
+		h *= 0x9e3779b9
 	}
-	return true
+	return match != 0
 }
 
-func (b *deleteBloom) hashes(key []byte) (uint64, uint64) {
-	h := maphash.Bytes(b.seed1, key) % b.bitCount
-	step := maphash.Bytes(b.seed2, key)%b.bitCount | 1
-	if step >= b.bitCount {
-		step = 1
-	}
-	return h, step
+// Keep all probes in a 64-byte block, using one hash and no division per probe.
+func (b *deleteBloom) block(key []byte) (*[8]uint64, uint32) {
+	h := maphash.Bytes(b.seed, key)
+	index, _ := bits.Mul64(h, uint64(len(b.bits)/8))
+	offset := index * 8
+	return (*[8]uint64)(b.bits[offset : offset+8]), uint32(h)
 }
