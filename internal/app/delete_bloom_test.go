@@ -30,7 +30,7 @@ func TestDeleteBloomSizeAndValidation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := len(b.bits)*8, 128; got != want {
+	if got, want := len(b.bits)*8, 192; got != want {
 		t.Fatalf("filter bytes = %d, want %d", got, want)
 	}
 	if _, err := newDeleteBloom(0); err == nil {

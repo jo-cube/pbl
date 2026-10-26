@@ -74,8 +74,20 @@ after a batch commit, earlier batches remain stored.
 The optional Bloom filter first scans the collection's live keys without
 copying values, then adds every incoming put. It never removes keys. A negative
 lookup safely skips a delete; a false positive only writes an unnecessary
-delete. The filter uses about 1.25 bytes per expected key, so `800M` needs about
-1 GB. Size for the union of existing keys and distinct incoming put keys.
-Underestimating the count reduces effectiveness but does not change results.
-With `--stats`, `records` and `deletes` count operations sent to Pebble, while
-filtered runs also report `deletes_skipped`.
+delete. Its probes stay within one 64-byte block. The filter uses about 1.375
+bytes per expected key, rounded up to 64 bytes: `10M` needs about 13.75 MB and
+`800M` about 1.1 GB. Size for the union of existing keys and distinct incoming
+put keys, rather than the total record count. Repeated puts do not require
+additional capacity. Underestimating the count reduces effectiveness but does
+not change results. Deletes of previously added keys continue to pass the
+filter even after those keys have been deleted from Pebble.
+With `--stats`, `records` and `deletes` count accepted input operations after
+filtering, before within-batch coalescing; filtered runs also report
+`deletes_skipped`. The reported `duration` excludes database open, filter
+construction and preload, and database close; use command wall time to measure
+the complete operation. Batch limits and counts continue to describe these input
+operations. Repeated keys within a batch may be reduced to their final operation.
+
+Successful streaming bulk commands flush a remaining WAL tail larger than
+4 MiB before closing, limiting replay work on the next invocation. This does not
+fsync every batch or change which batches remain committed after an input error.

@@ -192,7 +192,7 @@ kcat -C -b "$BROKERS" -t "$TOPIC" -o beginning -e -f '%k\t%S\t%s\n' \
 ```
 
 The expected count includes existing keys and distinct keys put by the input.
-`800M` uses about 1 GB. Existing collections are scanned once before stdin is
+`800M` uses about 1.1 GB. Existing collections are scanned once before stdin is
 consumed; values are not copied into application memory.
 
 For binary-safe producers, emit frame records instead:

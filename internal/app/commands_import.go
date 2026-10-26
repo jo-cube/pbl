@@ -173,7 +173,10 @@ func (c *cli) importRecords(s *store.Store, collection, format, keyMode string, 
 	if err != nil {
 		return badInputErr(err)
 	}
-	return flush()
+	if err := flush(); err != nil {
+		return err
+	}
+	return storageWrap(s.FlushBulk())
 }
 
 func (c *cli) applyCommand() *cobra.Command {
@@ -338,6 +341,9 @@ func (c *cli) applyRecords(s *store.Store, collection, format string, batchSize,
 	}
 	if err := flush(); err != nil {
 		return result, err
+	}
+	if err := s.FlushBulk(); err != nil {
+		return result, storageErr(err)
 	}
 	result.elapsed = time.Since(start)
 	return result, nil

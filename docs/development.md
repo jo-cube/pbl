@@ -187,12 +187,20 @@ so very short streams can allocate more overall. Payloads beyond the reuse limit
 showed essentially unchanged reader throughput. The cap intentionally avoids
 retaining a maximum-sized record for the rest of an import.
 
-Keep the existing batch lifecycle: Pebble already recycles closed batches, and
-its WAL pipeline governs when their memory can safely be reused. Keep the
-optional delete Bloom filter too: the million-record tombstone benchmark took
-about 87 ms with it versus 457 ms without it before these changes. Stream lookup
-caches, parallel processing, custom JSON parsers, and more Pebble tuning need
-representative workload evidence before adding their state or complexity.
+Continue closing committed Pebble batches: the WAL pipeline governs when their
+memory can safely be reused. Bulk writes use 16 MiB steady-state memtables,
+selective within-batch coalescing, and a success-only flush of WAL tails above
+4 MiB. The optional application Bloom filter uses eleven bits per expected key
+and six probes within a 64-byte block; Pebble's native SST filters are separate.
+
+See [ingestion performance notes](ingestion-performance.md) for benchmark
+commands, separate ingestion/Bloom baselines, correctness invariants, and measured
+memory, WAL, and compaction trade-offs. The existing-collection benchmark includes
+never-added deletes and 1%, 50%, and 100% historical-target mixtures. Historical
+keys may already have been deleted; the monotonic filter keeps passing them.
+
+Stream lookup caches, parallel parsing, custom JSON parsers, and additional
+Pebble tuning still need representative workload evidence.
 
 ## Release Packaging
 
