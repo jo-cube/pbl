@@ -88,7 +88,12 @@ func OpenExisting(path string) (*Store, error) {
 }
 
 func open(path string, mustExist bool) (_ *Store, err error) {
-	opts := &pebble.Options{Logger: discardLogger{}, ErrorIfNotExists: mustExist}
+	opts := &pebble.Options{
+		Logger:           discardLogger{},
+		ErrorIfNotExists: mustExist,
+		// Reduce flush frequency while keeping Pebble's small initial allocation.
+		MemTableSize: 16 << 20,
+	}
 	// L0's table filter is inherited by later levels.
 	opts.Levels[0].FilterPolicy = bloom.FilterPolicy(10)
 	db, err := pebble.Open(path, opts)
@@ -130,6 +135,14 @@ func (discardLogger) Fatalf(format string, args ...interface{}) {
 
 func (s *Store) Close() error {
 	return s.db.Close()
+}
+
+// FlushBulk bounds WAL replay on the next CLI invocation after a large bulk write.
+func (s *Store) FlushBulk() error {
+	if s.db.Metrics().WAL.Size <= 4<<20 {
+		return nil
+	}
+	return s.db.Flush()
 }
 
 func (s *Store) Init() (err error) {
@@ -344,7 +357,7 @@ func (s *Store) Scan(collection string, opts ScanOptions, fn func(Record) error)
 
 // NewBatch writes data only; callers adding puts must first call EnsureCollection.
 func (s *Store) NewBatch() *Batch {
-	return &Batch{batch: s.db.NewBatch()}
+	return &Batch{batch: s.db.NewBatch(), db: s.db}
 }
 
 func (s *Store) RequireInitialized() error {

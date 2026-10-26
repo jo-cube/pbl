@@ -1,12 +1,17 @@
 package store
 
 import (
+	"bytes"
+	"slices"
+	"sync"
+
 	"github.com/cockroachdb/pebble/v2"
 	"github.com/jo-cube/pbl/internal/keyenc"
 )
 
 type Batch struct {
 	batch      *pebble.Batch
+	db         *pebble.DB
 	count      int
 	bytes      int
 	collection string
@@ -59,6 +64,58 @@ func (b *Batch) collectionBase(collection string) ([]byte, error) {
 }
 
 func (b *Batch) Commit(opts WriteOptions) error {
+	if !b.shouldCoalesce() {
+		return b.batch.Commit(pebbleWriteOptions(opts))
+	}
+	reader := b.batch.Reader()
+	entries := batchEntriesPool.Get().([]batchEntry)
+	if cap(entries) < b.count {
+		entries = make([]batchEntry, 0, b.count)
+	}
+	defer func() {
+		if cap(entries) <= 4096 {
+			clear(entries)
+			batchEntriesPool.Put(entries[:0])
+		}
+	}()
+	for {
+		kind, key, value, ok, err := reader.Next()
+		if err != nil {
+			return err
+		}
+		if !ok {
+			break
+		}
+		entries = append(entries, batchEntry{key: key, value: value, delete: kind == pebble.InternalKeyKindDelete})
+	}
+	slices.SortStableFunc(entries, func(a, b batchEntry) int { return bytes.Compare(a.key, b.key) })
+	compact := b.db.NewBatch()
+	keep := false
+	defer func() {
+		if !keep {
+			_ = compact.Close()
+		}
+	}()
+	for i, entry := range entries {
+		if i+1 < len(entries) && bytes.Equal(entry.key, entries[i+1].key) {
+			continue
+		}
+		var err error
+		if entry.delete {
+			err = compact.Delete(entry.key, nil)
+		} else {
+			err = compact.Set(entry.key, entry.value, nil)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	original := b.batch
+	b.batch = compact
+	keep = true
+	if err := original.Close(); err != nil {
+		return err
+	}
 	return b.batch.Commit(pebbleWriteOptions(opts))
 }
 
@@ -72,4 +129,38 @@ func (b *Batch) Count() int {
 
 func (b *Batch) ApproxBytes() int {
 	return b.bytes
+}
+
+// Only retain small scratch buffers, and release views into the Pebble batch.
+var batchEntriesPool = sync.Pool{New: func() any { return make([]batchEntry, 0, 1024) }}
+
+type batchEntry struct {
+	key, value []byte
+	delete     bool
+}
+
+// Sample before sorting: most streams have too few repeated keys to repay it.
+// Counts and byte limits still describe the input, preserving commit boundaries.
+func (b *Batch) shouldCoalesce() bool {
+	const sample = 128
+	if b.count < sample {
+		return false
+	}
+	var keys [sample][]byte
+	reader := b.batch.Reader()
+	for i := range keys {
+		_, key, _, ok, err := reader.Next()
+		if err != nil || !ok {
+			return false
+		}
+		keys[i] = key
+	}
+	slices.SortFunc(keys[:], bytes.Compare)
+	duplicates := 0
+	for i := 1; i < len(keys); i++ {
+		if bytes.Equal(keys[i-1], keys[i]) {
+			duplicates++
+		}
+	}
+	return duplicates >= sample/8
 }

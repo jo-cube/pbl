@@ -119,7 +119,10 @@ values from each object. Success writes no stdout.`,
 			if err != nil {
 				return err
 			}
-			return flush()
+			if err := flush(); err != nil {
+				return err
+			}
+			return storageWrap(s.FlushBulk())
 		},
 	}
 	cmd.Flags().StringVar(&inputFormat, "input-format", "line", "line|ndjson input")
